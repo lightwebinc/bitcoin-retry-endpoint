@@ -15,15 +15,15 @@ import (
 type Level string
 
 const (
-	LevelIP      Level = "ip"
-	LevelSender  Level = "sender"
+	LevelIP       Level = "ip"
+	LevelSender   Level = "sender"
 	LevelSequence Level = "sequence"
 )
 
 // Limiter provides three-level rate limiting.
 type Limiter struct {
-	ipLimiter      *ipLimiter
-	senderLimiter  *senderLimiter
+	ipLimiter       *ipLimiter
+	senderLimiter   *senderLimiter
 	sequenceLimiter *sequenceLimiter
 }
 
@@ -39,8 +39,8 @@ type Config struct {
 // New constructs a new rate limiter.
 func New(cfg Config) *Limiter {
 	return &Limiter{
-		ipLimiter:      newIPLimiter(cfg.IPRate, cfg.IPBurst),
-		senderLimiter:  newSenderLimiter(cfg.SenderRate, cfg.SenderWindow),
+		ipLimiter:       newIPLimiter(cfg.IPRate, cfg.IPBurst),
+		senderLimiter:   newSenderLimiter(cfg.SenderRate, cfg.SenderWindow),
 		sequenceLimiter: newSequenceLimiter(cfg.SequenceMax),
 	}
 }
@@ -90,10 +90,10 @@ func (r *ipLimiter) Allow(ip net.IP) bool {
 
 // senderLimiter provides sliding window rate limiting per SenderID.
 type senderLimiter struct {
-	mu     sync.Mutex
+	mu      sync.Mutex
 	senders map[string]*senderEntry
-	rate   float64
-	window time.Duration
+	rate    float64
+	window  time.Duration
 }
 
 type senderEntry struct {
@@ -103,8 +103,8 @@ type senderEntry struct {
 func newSenderLimiter(ratePerSec float64, window time.Duration) *senderLimiter {
 	return &senderLimiter{
 		senders: make(map[string]*senderEntry),
-		rate:   ratePerSec,
-		window: window,
+		rate:    ratePerSec,
+		window:  window,
 	}
 }
 
@@ -133,8 +133,8 @@ func (r *senderLimiter) Allow(senderID [16]byte) bool {
 	}
 	entry.timestamps = entry.timestamps[:validIdx]
 
-	// Check if we're within the rate limit
-	maxRequests := int(r.rate * r.window.Seconds())
+	// Check if we're within the rate limit (rate = max requests per window).
+	maxRequests := int(r.rate)
 	if len(entry.timestamps) >= maxRequests {
 		return false
 	}
@@ -145,9 +145,9 @@ func (r *senderLimiter) Allow(senderID [16]byte) bool {
 
 // sequenceLimiter provides per-SequenceID request counting.
 type sequenceLimiter struct {
-	mu    sync.Mutex
-	seqs  map[uint64]int
-	max   int
+	mu   sync.Mutex
+	seqs map[uint64]int
+	max  int
 }
 
 func newSequenceLimiter(max int) *sequenceLimiter {

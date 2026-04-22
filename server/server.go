@@ -73,8 +73,13 @@ func (s *Server) Run(ctx context.Context) error {
 		defer s.rec.WorkerDone()
 	}
 
+	type nackRequest struct {
+		data  []byte
+		srcIP net.IP
+	}
+
 	// Worker pool for parallel request handling.
-	requests := make(chan []byte, 100)
+	requests := make(chan nackRequest, 100)
 	var wg sync.WaitGroup
 
 	// Start workers.
@@ -82,7 +87,17 @@ func (s *Server) Run(ctx context.Context) error {
 		wg.Add(1)
 		go func(workerID int) {
 			defer wg.Done()
-			s.worker(ctx, workerID, requests)
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case req, ok := <-requests:
+					if !ok {
+						return
+					}
+					s.processNACK(workerID, req.data, req.srcIP)
+				}
+			}
 		}(i)
 	}
 
@@ -113,12 +128,21 @@ func (s *Server) Run(ctx context.Context) error {
 				continue
 			}
 
+			// Extract source IP.
+			var srcIP net.IP
+			if udpAddr, ok := src.(*net.UDPAddr); ok {
+				srcIP = udpAddr.IP
+			}
+			if srcIP == nil {
+				srcIP = net.IPv6unspecified
+			}
+
 			// Copy the datagram for the worker.
 			datagram := make([]byte, NACKSize)
 			copy(datagram, buf[:n])
 
 			select {
-			case requests <- datagram:
+			case requests <- nackRequest{data: datagram, srcIP: srcIP}:
 			case <-ctx.Done():
 				close(requests)
 				wg.Wait()
@@ -128,18 +152,7 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 }
 
-func (s *Server) worker(ctx context.Context, workerID int, requests <-chan []byte) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case datagram := <-requests:
-			s.processNACK(workerID, datagram)
-		}
-	}
-}
-
-func (s *Server) processNACK(workerID int, datagram []byte) {
+func (s *Server) processNACK(workerID int, datagram []byte, srcIP net.IP) {
 	if s.rec != nil {
 		s.rec.NACKRequest()
 	}
@@ -157,7 +170,6 @@ func (s *Server) processNACK(workerID int, datagram []byte) {
 	shardSeqNum := extractShardSeqNum(datagram)
 
 	// Rate limiting.
-	srcIP := net.IPv6unspecified // TODO: extract from socket
 	allowed, level := s.rateLimiter.Allow(srcIP, senderID, sequenceID)
 	if !allowed {
 		if s.rec != nil {
@@ -247,19 +259,19 @@ func extractTxID(datagram []byte) [32]byte {
 	return txID
 }
 
-// extractSenderID extracts the SenderID from a NACK datagram (bytes 40-56).
+// extractSenderID extracts the SenderID from a NACK datagram (bytes 48-64).
 func extractSenderID(datagram []byte) [16]byte {
 	var senderID [16]byte
-	copy(senderID[:], datagram[40:56])
+	copy(senderID[:], datagram[48:64])
 	return senderID
 }
 
-// extractSequenceID extracts the SequenceID from a NACK datagram (bytes 56-64).
+// extractSequenceID extracts the SequenceID from a NACK datagram (bytes 64-72).
 func extractSequenceID(datagram []byte) uint64 {
-	return binary.BigEndian.Uint64(datagram[56:64])
+	return binary.BigEndian.Uint64(datagram[64:72])
 }
 
-// extractShardSeqNum extracts the ShardSeqNum from a NACK datagram (bytes 64-72).
+// extractShardSeqNum extracts the ShardSeqNum from a NACK datagram (bytes 40-48).
 func extractShardSeqNum(datagram []byte) uint64 {
-	return binary.BigEndian.Uint64(datagram[64:72])
+	return binary.BigEndian.Uint64(datagram[40:48])
 }

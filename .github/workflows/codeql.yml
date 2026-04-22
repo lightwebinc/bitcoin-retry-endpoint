@@ -1,0 +1,49 @@
+name: CodeQL
+
+on:
+  push:
+    branches: ["main", "master"]
+  pull_request:
+  schedule:
+    - cron: '0 3 * * 1'  # weekly, Monday 03:00 UTC
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: analyze
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          path: bitcoin-retry-endpoint
+
+      - uses: actions/checkout@v6
+        with:
+          repository: lightwebinc/bitcoin-shard-common
+          path: bitcoin-shard-common
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: bitcoin-retry-endpoint/go.mod
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: go
+          build-mode: manual
+
+      - name: Build for CodeQL
+        working-directory: bitcoin-retry-endpoint
+        run: go build -buildvcs=false ./...
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: "/language:go"

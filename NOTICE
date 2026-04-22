@@ -1,0 +1,32 @@
+bitcoin-retry-endpoint
+Copyright 2026 Lightweb Inc. (https://lightweb.net)
+
+=========================================================================
+
+This software listens for NACK (negative acknowledgement) datagrams from
+Bitcoin SV (BSV) transaction shard listeners, retrieves the corresponding
+cached BSV transaction frames, and retransmits each frame to the correct
+IPv6 multicast group derived from the transaction ID.
+
+=========================================================================
+Conceptual Attribution
+
+The IPv6 multicast transaction broadcast architecture from which this
+software draws inspiration was articulated by Dr. Craig S. Wright:
+
+  Multicast within Multicast: Anycast
+  https://singulargrit.substack.com/p/multicast-within-multicast-anycast
+  https://singulargrit.substack.com/
+
+=========================================================================
+Third-Party Standards
+
+The v1 wire-frame format (FrameVerV1 = 0x01) accepted and retransmitted
+by this software transports transactions conforming to BRC-12: Raw
+Transaction Format, a published standard maintained by BSV Blockchain:
+
+  BRC-12: Raw Transaction Format
+  BSV Blockchain Standards Repository
+  https://github.com/bitcoin-sv/BRCs/blob/master/transactions/0012.md
+
+=========================================================================

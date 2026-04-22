@@ -119,7 +119,7 @@ func run() error {
 	if err := retrans.Open(); err != nil {
 		return err
 	}
-	defer retrans.Close()
+	defer func() { _ = retrans.Close() }()
 
 	// Build server.
 	srv := server.New(cfg.NACKPort, c, rl, rec, retrans, cfg.NACKWorkers, cfg.Debug)

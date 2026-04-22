@@ -64,7 +64,7 @@ func (s *Server) Run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("server: listen: %w", err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	s.log.Info("NACK server listening", "port", s.port, "workers", s.workers)
 
@@ -109,7 +109,7 @@ func (s *Server) Run(ctx context.Context) error {
 			wg.Wait()
 			return nil
 		default:
-			conn.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+			_ = conn.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
 			n, src, err := conn.ReadFrom(buf)
 			if err != nil {
 				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {

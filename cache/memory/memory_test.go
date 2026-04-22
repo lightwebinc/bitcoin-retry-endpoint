@@ -7,7 +7,7 @@ import (
 
 func TestStoreAndRetrieve(t *testing.T) {
 	c := New(0)
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 
 	key := []byte("key1")
 	val := []byte("value1")
@@ -26,7 +26,7 @@ func TestStoreAndRetrieve(t *testing.T) {
 
 func TestMiss(t *testing.T) {
 	c := New(0)
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 
 	got, err := c.Retrieve([]byte("missing"))
 	if err != nil {
@@ -39,7 +39,7 @@ func TestMiss(t *testing.T) {
 
 func TestTTLExpiry(t *testing.T) {
 	c := New(0)
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 
 	key := []byte("expiring")
 	if err := c.Store(key, []byte("v"), 10*time.Millisecond); err != nil {
@@ -59,7 +59,7 @@ func TestTTLExpiry(t *testing.T) {
 
 func TestDelete(t *testing.T) {
 	c := New(0)
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 
 	key := []byte("toDelete")
 	if err := c.Store(key, []byte("v"), time.Minute); err != nil {
@@ -79,7 +79,7 @@ func TestDelete(t *testing.T) {
 
 func TestMaxKeysEviction(t *testing.T) {
 	c := New(3)
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 
 	for i := 0; i < 5; i++ {
 		key := []byte{byte(i)}
@@ -99,7 +99,7 @@ func TestMaxKeysEviction(t *testing.T) {
 
 func TestOverwrite(t *testing.T) {
 	c := New(0)
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 
 	key := []byte("k")
 	if err := c.Store(key, []byte("v1"), time.Minute); err != nil {

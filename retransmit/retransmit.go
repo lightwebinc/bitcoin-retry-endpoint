@@ -143,21 +143,21 @@ func (r *Retransmitter) openEgressSocket(iface *net.Interface) (*net.UDPConn, er
 	}
 	udpConn, ok := conn.(*net.UDPConn)
 	if !ok {
-		conn.Close()
+		_ = conn.Close()
 		return nil, fmt.Errorf("not a UDP connection")
 	}
 
 	// Set multicast interface.
 	file, err := udpConn.File()
 	if err != nil {
-		udpConn.Close()
+		_ = udpConn.Close()
 		return nil, fmt.Errorf("get file descriptor: %w", err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	fd := int(file.Fd())
 	if err := unix.SetsockoptInt(fd, unix.IPPROTO_IPV6, unix.IPV6_MULTICAST_IF, iface.Index); err != nil {
-		udpConn.Close()
+		_ = udpConn.Close()
 		return nil, fmt.Errorf("set multicast interface: %w", err)
 	}
 

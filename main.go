@@ -80,7 +80,7 @@ func run() error {
 		slog.Warn("unknown cache backend, using memory", "backend", cfg.CacheBackend)
 		c = memory.New(cfg.CacheMaxKeys)
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 
 	// Build multicast groups for ingress.
 	groups, err := buildGroups(cfg, engine)

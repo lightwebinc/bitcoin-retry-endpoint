@@ -34,7 +34,7 @@ import (
 )
 
 const (
-	recvBufSize   = frame.HeaderSize + frame.MaxPayload
+	recvBufSize   = 4 * 1024 * 1024  // per-worker UDP receive buffer
 	socketRecvBuf = 64 * 1024 * 1024 // 64 MiB
 )
 

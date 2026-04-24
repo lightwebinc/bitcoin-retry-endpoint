@@ -148,11 +148,11 @@ func (w *Worker) processFrame(raw []byte) {
 		w.rec.FrameReceived()
 	}
 
-	// Build cache key: SenderID (16B) + SequenceID (8B) + ShardSeqNum (8B) = 32B
-	key := make([]byte, 32)
-	copy(key[0:16], f.SenderID[:])
-	binary.BigEndian.PutUint64(key[16:24], f.SequenceID)
-	binary.BigEndian.PutUint64(key[24:32], f.ShardSeqNum)
+	// Build cache key: SenderID (4B) + SequenceID (4B) + ShardSeqNum (4B) = 12B
+	key := make([]byte, 12)
+	binary.BigEndian.PutUint32(key[0:4], f.SenderID)
+	binary.BigEndian.PutUint32(key[4:8], f.SequenceID)
+	binary.BigEndian.PutUint32(key[8:12], f.ShardSeqNum)
 
 	if err := w.cache.Store(key, raw, w.ttl); err != nil {
 		if w.rec != nil {
@@ -169,7 +169,7 @@ func (w *Worker) processFrame(raw []byte) {
 	if w.debug {
 		w.log.Debug("frame cached",
 			"txid", fmt.Sprintf("%x", f.TxID[:8]),
-			"sender_id", fmt.Sprintf("%x", f.SenderID[:8]),
+			"sender_id", f.SenderID,
 			"sequence_id", f.SequenceID,
 			"seq", f.ShardSeqNum,
 		)

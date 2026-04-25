@@ -7,14 +7,14 @@ import (
 	"github.com/lightwebinc/bitcoin-shard-common/frame"
 )
 
-func buildNACK(msgType byte, txID [32]byte, shardSeqNum uint64, senderID [16]byte, sequenceID uint64) []byte {
+func buildNACK(msgType byte, txID [32]byte, seqNum uint64, senderID [16]byte, sequenceID uint64) []byte {
 	buf := make([]byte, NACKSize)
 	binary.BigEndian.PutUint32(buf[0:4], frame.MagicBSV)
 	binary.BigEndian.PutUint16(buf[4:6], frame.ProtoVer)
 	buf[6] = msgType
 	buf[7] = 0
 	copy(buf[8:40], txID[:])
-	binary.BigEndian.PutUint64(buf[40:48], shardSeqNum)
+	binary.BigEndian.PutUint64(buf[40:48], seqNum)
 	copy(buf[48:64], senderID[:])
 	binary.BigEndian.PutUint64(buf[64:72], sequenceID)
 	return buf
@@ -58,16 +58,16 @@ func TestExtractFields(t *testing.T) {
 	var senderID [16]byte
 	senderID[0] = 0xCD
 
-	const shardSeqNum = uint64(12345)
+	const seqNum = uint64(12345)
 	const sequenceID = uint64(67890)
 
-	buf := buildNACK(0x10, txID, shardSeqNum, senderID, sequenceID)
+	buf := buildNACK(0x10, txID, seqNum, senderID, sequenceID)
 
 	if got := extractTxID(buf); got != txID {
 		t.Errorf("TxID mismatch: got %x, want %x", got, txID)
 	}
-	if got := extractShardSeqNum(buf); got != shardSeqNum {
-		t.Errorf("ShardSeqNum mismatch: got %d, want %d", got, shardSeqNum)
+	if got := extractSeqNum(buf); got != seqNum {
+		t.Errorf("SeqNum mismatch: got %d, want %d", got, seqNum)
 	}
 	if got := extractSenderID(buf); got != senderID {
 		t.Errorf("SenderID mismatch: got %x, want %x", got, senderID)

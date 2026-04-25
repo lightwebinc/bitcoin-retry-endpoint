@@ -167,7 +167,7 @@ func (s *Server) processNACK(workerID int, datagram []byte, srcIP net.IP) {
 	txID := extractTxID(datagram)
 	senderID := extractSenderID(datagram)
 	sequenceID := extractSequenceID(datagram)
-	shardSeqNum := extractShardSeqNum(datagram)
+	seqNum := extractSeqNum(datagram)
 
 	// Rate limiting.
 	allowed, level := s.rateLimiter.Allow(srcIP, senderID, sequenceID)
@@ -185,7 +185,7 @@ func (s *Server) processNACK(workerID int, datagram []byte, srcIP net.IP) {
 	key := make([]byte, 32)
 	copy(key[0:16], senderID[:])
 	binary.BigEndian.PutUint64(key[16:24], sequenceID)
-	binary.BigEndian.PutUint64(key[24:32], shardSeqNum)
+	binary.BigEndian.PutUint64(key[24:32], seqNum)
 
 	// Retrieve from cache.
 	raw, err := s.cache.Retrieve(key)
@@ -201,7 +201,7 @@ func (s *Server) processNACK(workerID int, datagram []byte, srcIP net.IP) {
 			s.rec.CacheMiss()
 		}
 		if s.debug {
-			s.log.Debug("cache miss", "seq", shardSeqNum)
+			s.log.Debug("cache miss", "seq", seqNum)
 		}
 		return
 	}
@@ -221,7 +221,7 @@ func (s *Server) processNACK(workerID int, datagram []byte, srcIP net.IP) {
 	}
 
 	if s.debug {
-		s.log.Debug("retransmitted frame", "txid", fmt.Sprintf("%x", txID[:8]), "seq", shardSeqNum)
+		s.log.Debug("retransmitted frame", "txid", fmt.Sprintf("%x", txID[:8]), "seq", seqNum)
 	}
 }
 
@@ -271,7 +271,7 @@ func extractSequenceID(datagram []byte) uint64 {
 	return binary.BigEndian.Uint64(datagram[64:72])
 }
 
-// extractShardSeqNum extracts the ShardSeqNum from a NACK datagram (bytes 40-48).
-func extractShardSeqNum(datagram []byte) uint64 {
+// extractSeqNum extracts the SeqNum from a NACK datagram (bytes 40-48).
+func extractSeqNum(datagram []byte) uint64 {
 	return binary.BigEndian.Uint64(datagram[40:48])
 }

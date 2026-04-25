@@ -167,13 +167,13 @@ func (r *Retransmitter) openEgressSocket(iface *net.Interface) (*net.UDPConn, er
 // buildDedupKey builds a deduplication key from the frame.
 // Key format: bre:dedup:{hex(senderID+sequenceID+seqNum)}
 func (r *Retransmitter) buildDedupKey(raw []byte) []byte {
-	// Extract SenderID (bytes 88-104), SequenceID (bytes 40-48), ShardSeqNum (bytes 48-56).
+	// Extract SenderID (bytes 88-104), SequenceID (bytes 40-48), SeqNum (bytes 48-56).
 	if len(raw) < 104 {
 		return []byte{}
 	}
 	key := make([]byte, 32)
 	copy(key[0:16], raw[88:104]) // SenderID
 	copy(key[16:24], raw[40:48]) // SequenceID
-	copy(key[24:32], raw[48:56]) // ShardSeqNum
+	copy(key[24:32], raw[48:56]) // SeqNum
 	return key
 }

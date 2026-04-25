@@ -11,9 +11,9 @@
 // # Hot path per frame
 //
 //  1. Recvfrom (64 MiB receive buffer)
-//  2. frame.Decode — extract TxID, SequenceID, ShardSeqNum, SenderID
+//  2. frame.Decode — extract TxID, SequenceID, SeqNum, SenderID
 //  3. Drop if SequenceID == frame.SequenceIDRetransmit (retransmit marker)
-//  4. Build cache key (SenderID + SequenceID + ShardSeqNum)
+//  4. Build cache key (SenderID + SequenceID + SeqNum)
 //  5. cache.Store(key, raw, TTL)
 package ingress
 
@@ -148,11 +148,11 @@ func (w *Worker) processFrame(raw []byte) {
 		w.rec.FrameReceived()
 	}
 
-	// Build cache key: SenderID (4B) + SequenceID (4B) + ShardSeqNum (4B) = 12B
+	// Build cache key: SenderID (4B) + SequenceID (4B) + SeqNum (4B) = 12B
 	key := make([]byte, 12)
 	binary.BigEndian.PutUint32(key[0:4], f.SenderID)
 	binary.BigEndian.PutUint32(key[4:8], f.SequenceID)
-	binary.BigEndian.PutUint32(key[8:12], f.ShardSeqNum)
+	binary.BigEndian.PutUint32(key[8:12], f.SeqNum)
 
 	if err := w.cache.Store(key, raw, w.ttl); err != nil {
 		if w.rec != nil {
@@ -171,7 +171,7 @@ func (w *Worker) processFrame(raw []byte) {
 			"txid", fmt.Sprintf("%x", f.TxID[:8]),
 			"sender_id", f.SenderID,
 			"sequence_id", f.SequenceID,
-			"seq", f.ShardSeqNum,
+			"seq", f.SeqNum,
 		)
 	}
 }

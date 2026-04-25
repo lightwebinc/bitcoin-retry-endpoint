@@ -7,7 +7,7 @@ import "time"
 // Cache defines the interface for frame storage backends.
 type Cache interface {
 	// Store stores a frame value under the given key with the specified TTL.
-	// key is a 32-byte composite: SenderID (16B) + SequenceID (8B) + ShardSeqNum (8B).
+	// key is a 32-byte composite: SenderID (16B) + SequenceID (8B) + SeqNum (8B).
 	// value is the raw frame bytes (108-byte v2 header + payload).
 	Store(key []byte, value []byte, ttl time.Duration) error
 

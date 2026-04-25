@@ -110,11 +110,11 @@ This would reduce redundant NACK traffic when multiple listeners miss the same f
 
 **Implementation approach:**
 - Add a `RetransmitTracker` struct in the listener's NACK package
-- Track per-SenderID recently retransmitted SequenceIDs/ShardSeqNums
+- Track per-SenderID recently retransmitted SequenceIDs/SeqNums
 - Use a sliding window (e.g., 5-10 seconds) to expire entries
 - Check tracker before sending NACKs: if the gap was recently retransmitted, suppress the NACK
 
-The dedup key would be: SenderID (16B) + SequenceID (8B) + ShardSeqNum (8B) = 32B, matching the retry endpoint's dedup key format.
+The dedup key would be: SenderID (16B) + SequenceID (8B) + SeqNum (8B) = 32B, matching the retry endpoint's dedup key format.
 
 ## License
 

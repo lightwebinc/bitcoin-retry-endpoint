@@ -17,14 +17,14 @@ import (
 	"github.com/lightwebinc/bitcoin-retry-endpoint/ratelimit"
 )
 
-// NACKSize is the fixed size of a BRC-125 NACK datagram (56 bytes).
-// See docs/brc-125-retransmission-protocol.md for the wire format.
+// NACKSize is the fixed size of a BRC-TBD-retransmission NACK datagram (56 bytes).
+// See docs/brc-tbd-retransmission-protocol.md for the wire format.
 const NACKSize = 56
 
-// ResponseSize is the fixed size of a BRC-125 ACK or MISS response (24 bytes).
+// ResponseSize is the fixed size of a BRC-TBD-retransmission ACK or MISS response (24 bytes).
 const ResponseSize = 24
 
-// MsgType constants for BRC-125 protocol messages.
+// MsgType constants for BRC-TBD-retransmission protocol messages.
 const (
 	msgTypeNACK byte = 0x10
 	msgTypeMISS byte = 0x11
@@ -180,7 +180,7 @@ func (s *Server) processNACK(conn net.PacketConn, workerID int, datagram []byte,
 		return
 	}
 
-	// Extract fields (BRC-125 56-byte format).
+	// Extract fields (BRC-TBD-retransmission 56-byte format).
 	txID := extractTxID(datagram)
 	senderID := extractSenderID(datagram)
 	sequenceID := extractSequenceID(datagram)
@@ -275,7 +275,7 @@ func (s *Server) sendResponse(conn net.PacketConn, src *net.UDPAddr, msgType byt
 	}
 }
 
-// validateNACK checks the NACK datagram format (BRC-125, 56 bytes).
+// validateNACK checks the NACK datagram format (BRC-TBD-retransmission, 56 bytes).
 func validateNACK(datagram []byte) error {
 	if len(datagram) != NACKSize {
 		return fmt.Errorf("invalid NACK size: %d", len(datagram))

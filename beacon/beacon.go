@@ -20,7 +20,7 @@ const ADVERTSize = 56
 // MsgTypeADVERT is the message type for ADVERT beacons.
 const MsgTypeADVERT byte = 0x20
 
-// Flag bits (BRC-125).
+// Flag bits (BRC-TBD-retransmission).
 const (
 	FlagHasParent           uint16 = 0x0002
 	FlagDraining            uint16 = 0x0004

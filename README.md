@@ -12,7 +12,7 @@ Caching endpoint for multicast NACK-based retransmission of missed Bitcoin trans
 - **Cache**: Modular backend supporting Redis (primary) or in-memory (fallback)
 - **Server**: UDP NACK receiver (BRC-TBD-retransmission, 56-byte) with worker pool and ACK/MISS responses
 - **Beacon**: ADVERT beacon sender for dynamic endpoint discovery (BRC-TBD-retransmission)
-- **Rate Limiting**: Three-level limiting (IP, SenderID, SequenceID) with silent drops
+- **Rate Limiting**: Two-level limiting (per-IP token bucket, per-LookupSeq sliding window) with silent drops
 - **Retransmit**: Sharding-based multicast egress with Redis-backed cross-instance deduplication
 - **Metrics**: Prometheus + OTLP with `bre_` prefix
 
@@ -58,9 +58,9 @@ All flags have environment variable equivalents (e.g., `-mc-iface` → `MC_IFACE
 ### Rate Limiting
 - `-rl-ip-rate` (RL_IP_RATE): IP rate limit (tokens/sec, default: `100`)
 - `-rl-ip-burst` (RL_IP_BURST): IP burst size (default: `10`)
-- `-rl-sender-rate` (RL_SENDER_RATE): SenderID rate limit (req/window, default: `50`)
-- `-rl-sender-window` (RL_SENDER_WINDOW): SenderID sliding window (default: `1m`)
-- `-rl-sequence-max` (RL_SEQUENCE_MAX): Max requests per SequenceID (default: `100`)
+- `-rl-sequence-max` (RL_SEQUENCE_MAX): Max requests per LookupSeq per window (default: `100`)
+- `-rl-sequence-window` (RL_SEQUENCE_WINDOW): LookupSeq sliding window (default: `1m`)
+- `-rl-sender-rate`, `-rl-sender-window` (RL_SENDER_RATE, RL_SENDER_WINDOW): **Deprecated no-ops.** SenderID was removed from the NACK wire format in BRC-124.
 
 ### Observability
 - `-metrics-addr` (METRICS_ADDR): HTTP bind for `/metrics`, `/healthz`, `/readyz` (default: `:9400`)
@@ -87,7 +87,7 @@ All flags have environment variable equivalents (e.g., `-mc-iface` → `MC_IFACE
 - **Retransmit deduplication**: Cross-instance coordination via Redis SET NX (60s window) prevents multiple endpoints from retransmitting the same frame
 - **Frame validation**: Only retransmits cached frames with valid headers
 - **ACK/MISS responses**: 24-byte responses to NACK senders for cache hit (ACK) or miss (MISS)
-- **Rate limiting**: Silent drops at IP, SenderID, and SequenceID levels
+- **Rate limiting**: Silent drops at IP and LookupSeq levels; SenderID was removed from the BRC-124 NACK wire format and is no longer a rate-limiting key
 
 ## Deployment Notes
 
@@ -101,7 +101,7 @@ All flags have environment variable equivalents (e.g., `-mc-iface` → `MC_IFACE
 All metrics use the `bre_` prefix:
 - `bre_cache_hits_total`, `bre_cache_misses_total`, `bre_cache_size`, `bre_cache_errors_total`
 - `bre_nack_requests_total`, `bre_retransmits_total`, `bre_retransmit_dedup_total`
-- `bre_rate_limit_drops_total{level=ip|sender|sequence}`
+- `bre_rate_limit_drops_total{level=ip|sequence}`
 - `bre_frames_received_total`, `bre_frames_cached_total`, `bre_frames_dropped_total{reason}`
 
 ## Cross-Repo Dependencies
@@ -116,23 +116,26 @@ All metrics use the `bre_` prefix:
 - [BRC-TBD-addressing (Multicast Addressing)](https://github.com/lightwebinc/bitcoin-multicast/blob/main/docs/brc-tbd-multicast-addressing.md)
 - [NACK Retransmission Flow](https://github.com/lightwebinc/bitcoin-multicast/blob/main/docs/nack-retransmission-flow.md)
 
-## Future Enhancements
+## Implementation Notes
 
-### Retransmission Tracking in Listeners
+### Retransmit fill tracking in listeners
 
-Listeners could track recently received retransmissions per gap to:
-1. Throttle their own NACK requests (don't re-request a gap that was just retransmitted)
-2. Throttle downstream requesters for the same gap
+When a retry endpoint retransmits a frame via multicast, listeners that receive
+it call `nack.Tracker.Observe` with the retransmitted frame's `PrevSeq`/`CurSeq`.
+If the incoming `CurSeq` matches a pending gap key, `Observe` auto-closes the gap
+inline (before the next sweeper tick). This is the primary suppression path for
+frames recovered by multicast retransmit and is tracked by `bsl_gaps_suppressed_total`.
 
-This would reduce redundant NACK traffic when multiple listeners miss the same frame and the retry endpoint retransmits it.
+Out-of-order or retransmitted frames with `prevSeq < lastCurSeq` are accepted
+silently: they close gaps but never create phantom gap entries and never regress
+the chain pointer.
 
-**Implementation approach:**
-- Add a `RetransmitTracker` struct in the listener's NACK package
-- Track per-SenderID recently retransmitted SequenceIDs/SeqNums
-- Use a sliding window (e.g., 5-10 seconds) to expire entries
-- Check tracker before sending NACKs: if the gap was recently retransmitted, suppress the NACK
+### Beacon multicast interface binding
 
-The dedup key would be: SenderID (4B) + SequenceID (4B) + SeqNum (4B) = 12B, matching the retry endpoint's cache key format.
+On multi-homed Linux hosts (management + fabric NICs), the kernel may route
+`ff05::` multicast packets via the default-route interface (management) rather
+than the fabric NIC. The beacon sender sets `IPV6_MULTICAST_IF` explicitly
+after `net.DialUDP` to force beacons out the fabric interface (`MC_IFACE`).
 
 ## License
 

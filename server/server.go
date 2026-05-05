@@ -205,7 +205,7 @@ func (s *Server) processNACK(conn net.PacketConn, workerID int, datagram []byte,
 	} else {
 		srcIP = net.IPv6unspecified
 	}
-	allowed, level := s.rateLimiter.Allow(srcIP, 0, 0)
+	allowed, level := s.rateLimiter.Allow(srcIP, lookupSeq)
 	if !allowed {
 		if s.rec != nil {
 			s.rec.RateLimitDrop(string(level))

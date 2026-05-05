@@ -54,8 +54,8 @@ type Config struct {
 	// Rate limiting
 	RLIPRate         float64       // IP rate limit (tokens per second)
 	RLIPBurst        int           // IP burst size
-	RLSenderRate     float64       // SenderID rate limit (requests per window)
-	RLSenderWindow   time.Duration // SenderID sliding window duration
+	RLSenderRate     float64       // Deprecated: SenderID removed from BRC-124 NACK wire format; accepted for backwards-compat but ignored by ratelimit.Limiter.
+	RLSenderWindow   time.Duration // Deprecated: see RLSenderRate.
 	RLSequenceMax    int           // Max requests per SequenceID per SequenceWindow
 	RLSequenceWindow time.Duration // SequenceID sliding window duration
 
@@ -124,9 +124,9 @@ func Load() (*Config, error) {
 	flag.IntVar(&c.RLIPBurst, "rl-ip-burst", envInt("RL_IP_BURST", 10),
 		"IP rate limit burst size")
 	flag.Float64Var(&c.RLSenderRate, "rl-sender-rate", envFloat("RL_SENDER_RATE", 50),
-		"SenderID rate limit (requests per window)")
+		"[deprecated no-op] SenderID was removed from the BRC-124 NACK wire format")
 	flag.DurationVar(&c.RLSenderWindow, "rl-sender-window", envDuration("RL_SENDER_WINDOW", time.Minute),
-		"SenderID sliding window duration")
+		"[deprecated no-op] SenderID was removed from the BRC-124 NACK wire format")
 	flag.IntVar(&c.RLSequenceMax, "rl-sequence-max", envInt("RL_SEQUENCE_MAX", 100),
 		"max requests per SequenceID per sliding window")
 	flag.DurationVar(&c.RLSequenceWindow, "rl-sequence-window", envDuration("RL_SEQUENCE_WINDOW", time.Minute),

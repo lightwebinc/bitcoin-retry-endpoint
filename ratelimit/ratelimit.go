@@ -1,9 +1,11 @@
-// Package ratelimit provides three-level rate limiting for NACK requests:
-// per-IP token bucket, per-senderID sliding window, per-sequenceID counter.
+// Package ratelimit provides two-level rate limiting for NACK requests:
+// per-IP token bucket and per-LookupSeq sliding window.
+//
+// BRC-124 removed SenderID and SequenceID (uint32) from the wire format;
+// the only NACK-level identifier is LookupSeq (uint64 XXH64 hash).
 package ratelimit
 
 import (
-	"fmt"
 	"net"
 	"sync"
 	"time"
@@ -16,14 +18,12 @@ type Level string
 
 const (
 	LevelIP       Level = "ip"
-	LevelSender   Level = "sender"
 	LevelSequence Level = "sequence"
 )
 
-// Limiter provides three-level rate limiting.
+// Limiter provides two-level rate limiting.
 type Limiter struct {
 	ipLimiter       *ipLimiter
-	senderLimiter   *senderLimiter
 	sequenceLimiter *sequenceLimiter
 }
 
@@ -46,21 +46,19 @@ func New(cfg Config) *Limiter {
 	}
 	return &Limiter{
 		ipLimiter:       newIPLimiter(cfg.IPRate, cfg.IPBurst),
-		senderLimiter:   newSenderLimiter(cfg.SenderRate, cfg.SenderWindow),
 		sequenceLimiter: newSequenceLimiter(cfg.SequenceMax, cfg.SequenceWindow),
 	}
 }
 
-// Allow checks if the request should be allowed based on all three levels.
+// Allow checks if the NACK request should be allowed.
+// srcIP is the listener source address; lookupSeq is the LookupSeq field from
+// the NACK datagram (CurSeq or PrevSeq hash, BRC-124).
 // Returns (true, "") if allowed, (false, level) if rate limited.
-func (r *Limiter) Allow(srcIP net.IP, senderID uint32, sequenceID uint32) (bool, Level) {
+func (r *Limiter) Allow(srcIP net.IP, lookupSeq uint64) (bool, Level) {
 	if !r.ipLimiter.Allow(srcIP) {
 		return false, LevelIP
 	}
-	if !r.senderLimiter.Allow(senderID) {
-		return false, LevelSender
-	}
-	if !r.sequenceLimiter.Allow(sequenceID) {
+	if !r.sequenceLimiter.Allow(lookupSeq) {
 		return false, LevelSequence
 	}
 	return true, ""
@@ -94,62 +92,7 @@ func (r *ipLimiter) Allow(ip net.IP) bool {
 	return limiter.Allow()
 }
 
-// senderLimiter provides sliding window rate limiting per SenderID.
-type senderLimiter struct {
-	mu      sync.Mutex
-	senders map[string]*senderEntry
-	rate    float64
-	window  time.Duration
-}
-
-type senderEntry struct {
-	timestamps []time.Time
-}
-
-func newSenderLimiter(ratePerSec float64, window time.Duration) *senderLimiter {
-	return &senderLimiter{
-		senders: make(map[string]*senderEntry),
-		rate:    ratePerSec,
-		window:  window,
-	}
-}
-
-func (r *senderLimiter) Allow(senderID uint32) bool {
-	key := fmt.Sprintf("%08x", senderID)
-	now := time.Now()
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	entry, ok := r.senders[key]
-	if !ok {
-		entry = &senderEntry{
-			timestamps: make([]time.Time, 0),
-		}
-		r.senders[key] = entry
-	}
-
-	// Remove timestamps outside the window
-	cutoff := now.Add(-r.window)
-	validIdx := 0
-	for _, ts := range entry.timestamps {
-		if ts.After(cutoff) {
-			entry.timestamps[validIdx] = ts
-			validIdx++
-		}
-	}
-	entry.timestamps = entry.timestamps[:validIdx]
-
-	// Check if we're within the rate limit (rate = max requests per window).
-	maxRequests := int(r.rate)
-	if len(entry.timestamps) >= maxRequests {
-		return false
-	}
-
-	entry.timestamps = append(entry.timestamps, now)
-	return true
-}
-
-// sequenceLimiter provides sliding-window rate limiting per SequenceID.
+// sequenceLimiter provides sliding-window rate limiting per LookupSeq (uint64).
 //
 // The legacy implementation used a monotonic counter per SequenceID with no
 // expiration. That caused long-lived flows to eventually exhaust the counter
@@ -159,7 +102,7 @@ func (r *senderLimiter) Allow(senderID uint32) bool {
 // at full capacity.
 type sequenceLimiter struct {
 	mu     sync.Mutex
-	seqs   map[uint32]*sequenceEntry
+	seqs   map[uint64]*sequenceEntry
 	max    int
 	window time.Duration
 }
@@ -170,21 +113,21 @@ type sequenceEntry struct {
 
 func newSequenceLimiter(max int, window time.Duration) *sequenceLimiter {
 	return &sequenceLimiter{
-		seqs:   make(map[uint32]*sequenceEntry),
+		seqs:   make(map[uint64]*sequenceEntry),
 		max:    max,
 		window: window,
 	}
 }
 
-func (r *sequenceLimiter) Allow(sequenceID uint32) bool {
+func (r *sequenceLimiter) Allow(lookupSeq uint64) bool {
 	now := time.Now()
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	entry, ok := r.seqs[sequenceID]
+	entry, ok := r.seqs[lookupSeq]
 	if !ok {
 		entry = &sequenceEntry{timestamps: make([]time.Time, 0, r.max)}
-		r.seqs[sequenceID] = entry
+		r.seqs[lookupSeq] = entry
 	}
 
 	// Drop timestamps outside the window. Expected working set is small

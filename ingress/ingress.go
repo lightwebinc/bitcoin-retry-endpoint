@@ -11,10 +11,13 @@
 // # Hot path per frame
 //
 //  1. Recvfrom (64 MiB receive buffer)
-//  2. frame.Decode — extract TxID, SequenceID, SeqNum, SenderID
-//  3. Drop if SequenceID == frame.SequenceIDRetransmit (retransmit marker)
-//  4. Build cache key (SenderID + SequenceID + SeqNum)
-//  5. cache.Store(key, raw, TTL)
+//  2. frame.Decode — extract PrevSeq, CurSeq
+//  3. Drop if CurSeq == 0 (proxy has not stamped the frame)
+//  4. Store primary index:   key = 0x01 || CurSeq  (8+1 = 9 bytes) → raw frame
+//  5. Store secondary index: key = 0x00 || PrevSeq (8+1 = 9 bytes) → CurSeq (8 bytes)
+//
+// The dual index lets the retry endpoint serve both LookupByCurSeq and
+// LookupByPrevSeq NACK requests without scanning all cached frames.
 package ingress
 
 import (
@@ -148,18 +151,32 @@ func (w *Worker) processFrame(raw []byte) {
 		w.rec.FrameReceived()
 	}
 
-	// Build cache key: SenderID (4B) + SequenceID (4B) + SeqNum (4B) = 12B
-	key := make([]byte, 12)
-	binary.BigEndian.PutUint32(key[0:4], f.SenderID)
-	binary.BigEndian.PutUint32(key[4:8], f.SequenceID)
-	binary.BigEndian.PutUint32(key[8:12], f.SeqNum)
+	if f.CurSeq == 0 {
+		return // proxy has not stamped this frame
+	}
 
-	if err := w.cache.Store(key, raw, w.ttl); err != nil {
+	// Primary index: 0x01 || CurSeq → raw frame (LookupByCurSeq)
+	var primaryKey [9]byte
+	primaryKey[0] = 0x01
+	binary.BigEndian.PutUint64(primaryKey[1:9], f.CurSeq)
+	if err := w.cache.Store(primaryKey[:], raw, w.ttl); err != nil {
 		if w.rec != nil {
 			w.rec.CacheError()
 		}
-		w.log.Error("cache store error", "err", err)
+		w.log.Error("cache store error (primary)", "err", err)
 		return
+	}
+
+	// Secondary index: 0x00 || PrevSeq → CurSeq pointer (LookupByPrevSeq)
+	if f.PrevSeq != 0 {
+		var secondaryKey [9]byte
+		secondaryKey[0] = 0x00
+		binary.BigEndian.PutUint64(secondaryKey[1:9], f.PrevSeq)
+		var curSeqVal [8]byte
+		binary.BigEndian.PutUint64(curSeqVal[:], f.CurSeq)
+		if err := w.cache.Store(secondaryKey[:], curSeqVal[:], w.ttl); err != nil {
+			w.log.Error("cache store error (secondary)", "err", err)
+		}
 	}
 
 	if w.rec != nil {
@@ -169,9 +186,8 @@ func (w *Worker) processFrame(raw []byte) {
 	if w.debug {
 		w.log.Debug("frame cached",
 			"txid", fmt.Sprintf("%x", f.TxID[:8]),
-			"sender_id", f.SenderID,
-			"sequence_id", f.SequenceID,
-			"seq", f.SeqNum,
+			"prev_seq", f.PrevSeq,
+			"cur_seq", f.CurSeq,
 		)
 	}
 }

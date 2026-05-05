@@ -2,10 +2,121 @@ package server
 
 import (
 	"encoding/binary"
+	"net"
+	"sync"
 	"testing"
+	"time"
 
+	"github.com/lightwebinc/bitcoin-retry-endpoint/ratelimit"
 	"github.com/lightwebinc/bitcoin-shard-common/frame"
 )
+
+// ── test doubles ─────────────────────────────────────────────────────────────
+
+type mockCache struct {
+	mu   sync.Mutex
+	data map[string][]byte
+}
+
+func newMockCache() *mockCache { return &mockCache{data: make(map[string][]byte)} }
+
+func (m *mockCache) Store(key []byte, value []byte, _ time.Duration) error {
+	m.mu.Lock()
+	m.data[string(key)] = append([]byte{}, value...)
+	m.mu.Unlock()
+	return nil
+}
+
+func (m *mockCache) Retrieve(key []byte) ([]byte, error) {
+	m.mu.Lock()
+	v := m.data[string(key)]
+	m.mu.Unlock()
+	return v, nil
+}
+
+func (m *mockCache) Delete(key []byte) error {
+	m.mu.Lock()
+	delete(m.data, string(key))
+	m.mu.Unlock()
+	return nil
+}
+
+func (m *mockCache) Close() error { return nil }
+
+type mockRetransmitter struct {
+	mu      sync.Mutex
+	called  bool
+	lastRaw []byte
+}
+
+func (m *mockRetransmitter) Retransmit(raw []byte, _ [32]byte) error {
+	m.mu.Lock()
+	m.called = true
+	m.lastRaw = append([]byte{}, raw...)
+	m.mu.Unlock()
+	return nil
+}
+
+type mockPacketConn struct {
+	mu      sync.Mutex
+	written [][]byte
+}
+
+func (m *mockPacketConn) WriteTo(b []byte, _ net.Addr) (int, error) {
+	m.mu.Lock()
+	m.written = append(m.written, append([]byte{}, b...))
+	m.mu.Unlock()
+	return len(b), nil
+}
+
+func (m *mockPacketConn) ReadFrom([]byte) (int, net.Addr, error) { return 0, nil, nil }
+func (m *mockPacketConn) Close() error                           { return nil }
+func (m *mockPacketConn) LocalAddr() net.Addr                    { return nil }
+func (m *mockPacketConn) SetDeadline(_ time.Time) error          { return nil }
+func (m *mockPacketConn) SetReadDeadline(_ time.Time) error      { return nil }
+func (m *mockPacketConn) SetWriteDeadline(_ time.Time) error     { return nil }
+
+// ── test helpers ──────────────────────────────────────────────────────────────
+
+func permissiveRL() *ratelimit.Limiter {
+	return ratelimit.New(ratelimit.Config{
+		IPRate:         1e9,
+		IPBurst:        1_000_000,
+		SenderRate:     1e9,
+		SenderWindow:   time.Second,
+		SequenceMax:    1_000_000,
+		SequenceWindow: time.Second,
+	})
+}
+
+func buildCacheFrame(t *testing.T, curSeq uint64) []byte {
+	t.Helper()
+	f := &frame.Frame{CurSeq: curSeq}
+	f.TxID[0] = 0xAB
+	payload := []byte("test-payload")
+	buf := make([]byte, frame.HeaderSize+len(payload))
+	n, err := frame.Encode(f, buf)
+	if err != nil {
+		t.Fatalf("frame.Encode: %v", err)
+	}
+	return buf[:n]
+}
+
+func storePrimary(c *mockCache, curSeq uint64, raw []byte) {
+	var pk [9]byte
+	pk[0] = lookupByCurSeq
+	binary.BigEndian.PutUint64(pk[1:9], curSeq)
+	_ = c.Store(pk[:], raw, time.Minute)
+}
+
+func storeSecondary(c *mockCache, prevSeq, curSeq uint64) {
+	var sk [9]byte
+	sk[0] = lookupByPrevSeq
+	binary.BigEndian.PutUint64(sk[1:9], prevSeq)
+	var val [8]byte
+	binary.BigEndian.PutUint64(val[:], curSeq)
+	_ = c.Store(sk[:], val[:], time.Minute)
+}
 
 func buildNACK(msgType byte, lookupType byte, lookupSeq uint64) []byte {
 	buf := make([]byte, NACKSize)
@@ -74,5 +185,172 @@ func TestValidateNACK_parsesLookupSeq(t *testing.T) {
 	got := binary.BigEndian.Uint64(buf[8:16])
 	if got != want {
 		t.Errorf("LookupSeq = 0x%016X, want 0x%016X", got, want)
+	}
+}
+
+// ── processNACK behavioural tests ─────────────────────────────────────────────
+
+func TestProcessNACK_CacheHit_ByCurSeq_RetransmitsAndACKs(t *testing.T) {
+	mc := newMockCache()
+	rt := &mockRetransmitter{}
+	conn := &mockPacketConn{}
+
+	const curSeq uint64 = 0xDEADBEEFCAFE0001
+	raw := buildCacheFrame(t, curSeq)
+	storePrimary(mc, curSeq, raw)
+
+	s := New(9300, mc, permissiveRL(), nil, rt, 1, false)
+	src := &net.UDPAddr{IP: net.IPv6loopback, Port: 12345}
+	s.processNACK(conn, 0, buildNACK(msgTypeNACK, lookupByCurSeq, curSeq), src)
+
+	if !rt.called {
+		t.Error("retransmitter not called on cache hit (byCurSeq)")
+	}
+	if len(conn.written) != 1 {
+		t.Fatalf("expected 1 ACK response, got %d", len(conn.written))
+	}
+	if conn.written[0][6] != msgTypeACK {
+		t.Errorf("response[6] = 0x%02X, want ACK (0x%02X)", conn.written[0][6], msgTypeACK)
+	}
+	gotSeq := binary.BigEndian.Uint64(conn.written[0][8:16])
+	if gotSeq != curSeq {
+		t.Errorf("ACK carries CurSeq = %d, want %d", gotSeq, curSeq)
+	}
+}
+
+func TestProcessNACK_CacheMiss_ByCurSeq_SendsMISS(t *testing.T) {
+	mc := newMockCache() // empty cache
+	rt := &mockRetransmitter{}
+	conn := &mockPacketConn{}
+
+	s := New(9300, mc, permissiveRL(), nil, rt, 1, false)
+	src := &net.UDPAddr{IP: net.IPv6loopback, Port: 12345}
+	s.processNACK(conn, 0, buildNACK(msgTypeNACK, lookupByCurSeq, 0xCAFEBABE), src)
+
+	if rt.called {
+		t.Error("retransmitter must not be called on cache miss")
+	}
+	if len(conn.written) != 1 {
+		t.Fatalf("expected 1 MISS response, got %d", len(conn.written))
+	}
+	if conn.written[0][6] != msgTypeMISS {
+		t.Errorf("response[6] = 0x%02X, want MISS (0x%02X)", conn.written[0][6], msgTypeMISS)
+	}
+}
+
+func TestProcessNACK_CacheHit_ByPrevSeq_RetransmitsAndACKs(t *testing.T) {
+	mc := newMockCache()
+	rt := &mockRetransmitter{}
+	conn := &mockPacketConn{}
+
+	const prevSeq uint64 = 0xAAAA000000000001
+	const curSeq uint64 = 0xBBBB000000000001
+	raw := buildCacheFrame(t, curSeq)
+	storePrimary(mc, curSeq, raw)
+	storeSecondary(mc, prevSeq, curSeq)
+
+	s := New(9300, mc, permissiveRL(), nil, rt, 1, false)
+	src := &net.UDPAddr{IP: net.IPv6loopback, Port: 12345}
+	s.processNACK(conn, 0, buildNACK(msgTypeNACK, lookupByPrevSeq, prevSeq), src)
+
+	if !rt.called {
+		t.Error("retransmitter not called on cache hit (byPrevSeq)")
+	}
+	if len(conn.written) != 1 {
+		t.Fatalf("expected 1 ACK response, got %d", len(conn.written))
+	}
+	if conn.written[0][6] != msgTypeACK {
+		t.Errorf("response[6] = 0x%02X, want ACK (0x%02X)", conn.written[0][6], msgTypeACK)
+	}
+}
+
+func TestProcessNACK_CacheMiss_ByPrevSeq_NoSecondaryEntry_SendsMISS(t *testing.T) {
+	mc := newMockCache() // no secondary index entry
+	rt := &mockRetransmitter{}
+	conn := &mockPacketConn{}
+
+	s := New(9300, mc, permissiveRL(), nil, rt, 1, false)
+	src := &net.UDPAddr{IP: net.IPv6loopback, Port: 12345}
+	s.processNACK(conn, 0, buildNACK(msgTypeNACK, lookupByPrevSeq, 0x1234), src)
+
+	if rt.called {
+		t.Error("retransmitter must not be called when secondary index has no entry")
+	}
+	if len(conn.written) != 1 {
+		t.Fatalf("expected 1 MISS response, got %d", len(conn.written))
+	}
+	if conn.written[0][6] != msgTypeMISS {
+		t.Errorf("response[6] = 0x%02X, want MISS (0x%02X)", conn.written[0][6], msgTypeMISS)
+	}
+}
+
+func TestProcessNACK_SuppressACK_NoResponseOnHit(t *testing.T) {
+	mc := newMockCache()
+	rt := &mockRetransmitter{}
+	conn := &mockPacketConn{}
+
+	const curSeq uint64 = 0xDEAD
+	storePrimary(mc, curSeq, buildCacheFrame(t, curSeq))
+
+	s := New(9300, mc, permissiveRL(), nil, rt, 1, false)
+	s.SetSuppressACK(true)
+	src := &net.UDPAddr{IP: net.IPv6loopback, Port: 12345}
+	s.processNACK(conn, 0, buildNACK(msgTypeNACK, lookupByCurSeq, curSeq), src)
+
+	if !rt.called {
+		t.Error("retransmitter must still fire when suppressACK=true")
+	}
+	if len(conn.written) != 0 {
+		t.Errorf("expected no response with suppressACK=true, got %d", len(conn.written))
+	}
+}
+
+func TestProcessNACK_SuppressMISS_NoResponseOnMiss(t *testing.T) {
+	mc := newMockCache() // empty → miss
+	rt := &mockRetransmitter{}
+	conn := &mockPacketConn{}
+
+	s := New(9300, mc, permissiveRL(), nil, rt, 1, false)
+	s.SetSuppressMISS(true)
+	src := &net.UDPAddr{IP: net.IPv6loopback, Port: 12345}
+	s.processNACK(conn, 0, buildNACK(msgTypeNACK, lookupByCurSeq, 0x1234), src)
+
+	if len(conn.written) != 0 {
+		t.Errorf("expected no response with suppressMISS=true, got %d", len(conn.written))
+	}
+}
+
+func TestProcessNACK_InvalidDatagram_SilentDrop(t *testing.T) {
+	mc := newMockCache()
+	rt := &mockRetransmitter{}
+	conn := &mockPacketConn{}
+
+	s := New(9300, mc, permissiveRL(), nil, rt, 1, false)
+	bad := buildNACK(msgTypeNACK, lookupByCurSeq, 42)
+	bad[0] = 0x00 // corrupt magic
+	src := &net.UDPAddr{IP: net.IPv6loopback, Port: 12345}
+	s.processNACK(conn, 0, bad, src)
+
+	if rt.called || len(conn.written) != 0 {
+		t.Error("invalid NACK must be silently dropped")
+	}
+}
+
+func TestProcessNACK_NilSrc_RetransmitsNoResponse(t *testing.T) {
+	mc := newMockCache()
+	rt := &mockRetransmitter{}
+	conn := &mockPacketConn{}
+
+	const curSeq uint64 = 0xABCD1234
+	storePrimary(mc, curSeq, buildCacheFrame(t, curSeq))
+
+	s := New(9300, mc, permissiveRL(), nil, rt, 1, false)
+	s.processNACK(conn, 0, buildNACK(msgTypeNACK, lookupByCurSeq, curSeq), nil)
+
+	if !rt.called {
+		t.Error("retransmitter must fire even with nil src")
+	}
+	if len(conn.written) != 0 {
+		t.Errorf("no response should be sent when src is nil (no return address), got %d", len(conn.written))
 	}
 }

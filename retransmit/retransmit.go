@@ -90,19 +90,21 @@ func (r *Retransmitter) Retransmit(raw []byte, txID [32]byte) error {
 	// Cross-instance deduplication via Redis SET NX.
 	if r.redisCache != nil {
 		dedupKey := r.buildDedupKey(raw)
-		set, err := r.redisCache.SetNX(dedupKey, []byte("1"), r.dedupWindow)
-		if err != nil {
-			r.log.Error("dedup SET NX error", "err", err)
-		}
-		if !set {
-			// Another instance already retransmitted this frame.
-			if r.rec != nil {
-				r.rec.RetransmitDedup()
+		if len(dedupKey) > 0 {
+			set, err := r.redisCache.SetNX(dedupKey, []byte("1"), r.dedupWindow)
+			if err != nil {
+				r.log.Error("dedup SET NX error", "err", err)
 			}
-			if r.debug {
-				r.log.Debug("retransmit dropped by dedup", "txid", fmt.Sprintf("%x", txID[:8]))
+			if !set {
+				// Another instance already retransmitted this frame.
+				if r.rec != nil {
+					r.rec.RetransmitDedup()
+				}
+				if r.debug {
+					r.log.Debug("retransmit dropped by dedup", "txid", fmt.Sprintf("%x", txID[:8]))
+				}
+				return nil
 			}
-			return nil
 		}
 	}
 
@@ -165,15 +167,12 @@ func (r *Retransmitter) openEgressSocket(iface *net.Interface) (*net.UDPConn, er
 }
 
 // buildDedupKey builds a deduplication key from the frame.
-// Key format: bre:dedup:{hex(senderID+sequenceID+seqNum)}
+// Key: CurSeq (bytes 48–55), the unique XXH64 chain hash for this frame.
 func (r *Retransmitter) buildDedupKey(raw []byte) []byte {
-	// Extract SenderID (bytes 88-104), SequenceID (bytes 40-48), SeqNum (bytes 48-56).
-	if len(raw) < 104 {
-		return []byte{}
+	if len(raw) < 56 {
+		return nil
 	}
-	key := make([]byte, 32)
-	copy(key[0:16], raw[88:104]) // SenderID
-	copy(key[16:24], raw[40:48]) // SequenceID
-	copy(key[24:32], raw[48:56]) // SeqNum
+	key := make([]byte, 8)
+	copy(key, raw[48:56]) // CurSeq
 	return key
 }

@@ -20,7 +20,7 @@ bitcoin-shard-proxy ──multicast──▶ FF05::<shard>:9001
 
 - [Architecture](docs/architecture.md) — pipeline overview, ingress, cache, NACK server, retransmit, beacon, NACK bind address, package structure
 - [Configuration](docs/configuration.md) — all flags, environment variables, defaults, deployment examples
-- [BRC-126 — Retransmission Protocol](https://github.com/lightwebinc/bitcoin-multicast/blob/main/docs/brc-tbd-retransmission-protocol.md)
+- [BRC-126 — Retransmission Protocol](https://github.com/lightwebinc/bitcoin-multicast/blob/main/docs/brc-126-retransmission-protocol.md)
 - [NACK Retransmission Flow](https://github.com/lightwebinc/bitcoin-multicast/blob/main/docs/nack-retransmission-flow.md)
 - [BRC-124 Frame Format](https://github.com/lightwebinc/bitcoin-multicast/blob/main/docs/brc-124-frame-format.md)
 

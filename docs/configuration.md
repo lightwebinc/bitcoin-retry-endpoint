@@ -179,7 +179,7 @@ These flags are accepted for backwards compatibility but have no effect.
 
 Periodically multicast a 56-byte ADVERT datagram to the beacon group so
 listeners can discover this endpoint dynamically. See [BRC-126 — Retransmission
-Protocol](https://github.com/lightwebinc/bitcoin-multicast/blob/main/docs/brc-tbd-retransmission-protocol.md).
+Protocol](https://github.com/lightwebinc/bitcoin-multicast/blob/main/docs/brc-126-retransmission-protocol.md).
 
 When `false`, the endpoint is reachable only via static `-retry-endpoints` seeds
 on listeners.

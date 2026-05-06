@@ -70,7 +70,7 @@ type Config struct {
 	OTLPEndpoint string        // gRPC OTLP endpoint (empty = disabled)
 	OTLPInterval time.Duration // OTLP push interval
 
-	// Beacon (BRC-TBD-retransmission endpoint discovery)
+	// Beacon (BRC-126 endpoint discovery)
 	BeaconEnabled        bool
 	BeaconTier           uint          // 0 = closest to source
 	BeaconPreference     uint          // weighting within tier; higher = preferred
@@ -82,7 +82,7 @@ type Config struct {
 	BeaconFlagsDraining  bool
 	BeaconNACKAddr       string // explicit IPv6 unicast NACK address for ADVERT; auto-detected if empty
 
-	// Response suppression (BRC-TBD-retransmission)
+	// Response suppression (BRC-126)
 	SuppressACK  bool // do not emit ACK responses
 	SuppressMISS bool // do not emit MISS responses
 }

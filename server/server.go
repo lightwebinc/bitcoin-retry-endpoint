@@ -17,13 +17,13 @@ import (
 	"github.com/lightwebinc/bitcoin-retry-endpoint/ratelimit"
 )
 
-// NACKSize is the fixed size of a BRC-TBD-retransmission NACK datagram (24 bytes).
+// NACKSize is the fixed size of a BRC-126 NACK datagram (24 bytes).
 const NACKSize = 24
 
-// ResponseSize is the fixed size of a BRC-TBD-retransmission ACK or MISS response (16 bytes).
+// ResponseSize is the fixed size of a BRC-126 ACK or MISS response (16 bytes).
 const ResponseSize = 16
 
-// MsgType constants for BRC-TBD-retransmission protocol messages.
+// MsgType constants for BRC-126 protocol messages.
 const (
 	msgTypeNACK byte = 0x10
 	msgTypeMISS byte = 0x11

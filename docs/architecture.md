@@ -5,9 +5,9 @@
 `bitcoin-retry-endpoint` sits alongside `bitcoin-shard-listener` on the multicast
 fabric. It joins all shard groups, caches every BRC-124 frame it receives, and
 serves unicast NACK requests from listeners that detect sequence gaps. On a cache
-hit it retransmits the frame via multicast egress and sends an ACK response; on a
-miss it sends a MISS response so the listener can escalate immediately to the next
-endpoint.
+hit it retransmits the frame via multicast egress and/or directly to the requesting
+listener via unicast, then sends an ACK response. On a miss it sends a MISS
+response so the listener can escalate immediately to the next endpoint.
 
 Dynamic endpoint discovery is provided by the ADVERT beacon: the endpoint
 periodically multicasts a 56-byte advertisement so listeners can maintain a
@@ -25,7 +25,7 @@ bitcoin-shard-proxy  ──UDP multicast──▶ FF05::<shard>:9001
 bitcoin-shard-listener              bitcoin-retry-endpoint
 (gap detected → NACK)  ──UDP──▶  [nack-addr]:9300
               │                        │ lookup cache
-              │                        ├─ HIT  → retransmit multicast + ACK
+              │                        ├─ HIT  → retransmit (multicast and/or unicast) + ACK
               │                        └─ MISS → MISS response → escalate
               ◀── ACK/MISS ────────────┘
 ```
@@ -77,8 +77,10 @@ gap fill) even when the listener only knows the previous frame's `CurSeq`.
 ```text
 Offset  Size  Field        Value / notes
 ------  ----  -----        -------------
-     0     1  LookupType   0x00 = by PrevSeq; 0x01 = by CurSeq
-     1     7  Reserved     0x00
+     0     4  Magic        0xE3E1F3E8
+     4     2  ProtoVer     0x02BF
+     6     1  MsgType      0x10 (NACK)
+     7     1  LookupType   0x00 = by PrevSeq; 0x01 = by CurSeq
      8     8  LookupSeq    uint64 BE; the XXH64 hash to look up
     16     8  Reserved     0x00
 ```
@@ -88,8 +90,10 @@ Offset  Size  Field        Value / notes
 ```text
 Offset  Size  Field        Value / notes
 ------  ----  -----        -------------
-     0     1  MsgType      0x10 = ACK; 0x11 = MISS
-     1     7  Reserved     0x00
+     0     4  Magic        0xE3E1F3E8
+     4     2  ProtoVer     0x02BF
+     6     1  MsgType      0x12 = ACK; 0x11 = MISS
+     7     1  Flags        0x01 on ACK; 0x00 on MISS
      8     8  CurSeq       uint64 BE; CurSeq of the resolved frame (ACK) or echo of LookupSeq (MISS)
 ```
 
@@ -107,22 +111,44 @@ responses are always sourced from the address advertised in the ADVERT beacon.
 
 ## Retransmit
 
-`retransmit.Sender` holds one egress UDP socket per configured egress interface
-(set via `-egress-iface`). On a cache hit it:
+The endpoint supports two retransmit modes, which can be enabled independently or
+together via the ADVERT beacon flags:
+
+| Mode | Beacon flag | Config flag | Behaviour |
+|------|-------------|-------------|----------|
+| Multicast | `FlagMulticastRetransmit` | `-beacon-flags-multicast` (default `true`) | Frame sent to `FF05::<shard>:egress-port` on each egress interface |
+| Unicast | `FlagUnicastRetransmit` | `-beacon-flags-unicast` (default `false`) | Frame sent directly back to the NACK sender's address |
+
+### Multicast retransmit
+
+`retransmit.Retransmitter` holds one egress UDP socket per configured egress
+interface (set via `-egress-iface`). On a cache hit it:
 
 1. Decodes the cached frame to extract the TxID.
 2. Derives the shard group address from the TxID via `shard.Engine`.
 3. Sends the raw frame bytes verbatim to `FF05::<shard>:egress-port` on each
    egress interface.
 
-**Cross-instance deduplication:** When the Redis backend is in use, a `SET NX`
-with the `CurSeq` key and a `dedup-window` TTL (default 60 s) prevents two
-endpoints from both retransmitting the same frame. The first endpoint to acquire
-the key wins; others skip the send.
-
 Listeners that receive the retransmitted multicast frame call
 `nack.Tracker.Observe`; if the incoming `CurSeq` matches a pending gap entry the
 gap is auto-closed inline, before the next sweeper tick.
+
+### Unicast retransmit
+
+When unicast retransmit is enabled, the NACK server sends the raw frame directly
+back to the listener that issued the NACK, using the source address from the
+incoming datagram. This guarantees delivery to the specific listener without
+relying on multicast fabric propagation, but does not benefit other listeners
+that may have the same gap.
+
+Both modes can fire for the same NACK when both beacon flags are set.
+
+### Cross-instance deduplication
+
+When the Redis backend is in use, a `SET NX` with the `CurSeq` key and a
+`dedup-window` TTL (default 60 s) prevents two endpoints from both
+retransmitting the same frame. The first endpoint to acquire the key wins;
+others skip the send.
 
 ## Beacon discovery (BRC-126)
 
@@ -178,7 +204,7 @@ bitcoin-retry-endpoint/
   ingress/         single-worker multicast receive loop; writes to cache
   cache/           Cache interface + memory (freecache) and redis backends
   server/          UDP NACK receive pool; rate-limit → cache lookup → retransmit
-  retransmit/      multicast retransmit egress; cross-instance dedup
+  retransmit/      multicast + unicast retransmit egress; cross-instance dedup
   beacon/          ADVERT beacon sender; IPV6_MULTICAST_IF binding
   ratelimit/       per-IP token bucket + per-LookupSeq sliding window
   metrics/         OTel + Prometheus instrumentation (bre_ prefix)

@@ -117,6 +117,9 @@ func run() error {
 	var redisCache *redis.Cache
 	switch cfg.CacheBackend {
 	case "redis":
+		if cfg.RedisAddr == "" {
+			return fmt.Errorf("REDIS_ADDR required when CACHE_BACKEND=redis")
+		}
 		redisCache, err = redis.New(cfg.RedisAddr, "bre:frame:")
 		if err != nil {
 			return err
@@ -129,6 +132,18 @@ func run() error {
 		c = memory.New(cfg.CacheMaxKeys)
 	}
 	defer func() { _ = c.Close() }()
+
+	// Cross-instance dedup via Redis SET NX.
+	// When CACHE_BACKEND=memory and REDIS_ADDR is set, frame storage stays per-instance
+	// (freecache), and Redis is used only for the dedup gate in Retransmitter.Retransmit().
+	if redisCache == nil && cfg.RedisAddr != "" {
+		redisCache, err = redis.New(cfg.RedisAddr, "bre:dedup:")
+		if err != nil {
+			return fmt.Errorf("redis dedup: %w", err)
+		}
+		defer func() { _ = redisCache.Close() }()
+		slog.Info("cross-instance dedup enabled", "addr", cfg.RedisAddr)
+	}
 
 	// Build multicast groups for ingress.
 	groups, err := buildGroups(cfg, engine)

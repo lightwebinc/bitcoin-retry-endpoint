@@ -61,9 +61,20 @@ Cache storage backend. Valid values: `memory`, `redis`.
 | `memory` | In-process freecache | None | Single-node; lost on restart |
 | `redis` | External Redis | SET NX per frame | Shared; survives restart |
 
-### `-redis-addr` / `REDIS_ADDR` (default: `localhost:6379`)
+### `-redis-addr` / `REDIS_ADDR` (default: empty)
 
-Redis server address. Used only when `-cache-backend redis`.
+Redis server address. Behaviour depends on `-cache-backend`:
+
+| `-cache-backend` | `REDIS_ADDR` set | Behaviour |
+|------------------|-----------------|----------|
+| `memory` | no | freecache only; no cross-instance dedup |
+| `memory` | yes | freecache for frames; Redis used **only** for `SET NX` dedup |
+| `redis` | yes (required) | Redis for both frame storage and dedup |
+
+When `REDIS_ADDR` is empty and `CACHE_BACKEND=redis`, startup fails with an
+explicit error. When `CACHE_BACKEND=memory` and `REDIS_ADDR` is set, the frame
+cache stays per-instance (scenario isolation is preserved) while retransmit
+deduplication becomes cross-instance.
 
 ### `-cache-ttl` / `CACHE_TTL` (default: `60s`)
 
@@ -311,7 +322,7 @@ Metric export interval for the OTLP push exporter. Ignored when
 | `bre_cache_hits_total` | NACK requests resolved from cache |
 | `bre_cache_misses_total` | NACK requests with no cached frame |
 | `bre_retransmits_total` | Frames sent to multicast egress |
-| `bre_retransmit_dedup_total` | Retransmits skipped by cross-instance dedup (Redis backend only) |
+| `bre_retransmit_dedup_total` | Retransmits skipped by cross-instance dedup (requires `REDIS_ADDR`) |
 | `bre_rate_limit_drops_total{level=ip\|chain\|sequence\|group}` | Requests dropped (or retransmit suppressed) by rate limiter tier |
 
 ---
@@ -325,6 +336,24 @@ bitcoin-retry-endpoint \
   -shard-bits 16 \
   -cache-backend memory \
   -cache-ttl 60s
+```
+
+## Example: memory cache + Redis dedup, multi-homed host
+
+Frame cache stays per-instance (safe for scenario 13-style tests). Redis used
+only for `SET NX` retransmit deduplication across retry endpoints.
+
+```bash
+bitcoin-retry-endpoint \
+  -mc-iface enp6s0 \
+  -egress-iface enp6s0 \
+  -shard-bits 2 \
+  -cache-backend memory \
+  -redis-addr 10.10.10.40:6379 \
+  -nack-addr fd20::24 \
+  -beacon-tier 0 \
+  -beacon-preference 128 \
+  -metrics-addr :9400
 ```
 
 ## Example: Redis cache, multi-homed host

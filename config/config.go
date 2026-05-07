@@ -104,8 +104,8 @@ func Load() (*Config, error) {
 
 	flag.StringVar(&c.CacheBackend, "cache-backend", envStr("CACHE_BACKEND", "memory"),
 		"cache backend: redis | memory")
-	flag.StringVar(&c.RedisAddr, "redis-addr", envStr("REDIS_ADDR", "localhost:6379"),
-		"Redis server address")
+	flag.StringVar(&c.RedisAddr, "redis-addr", envStr("REDIS_ADDR", ""),
+		"Redis server address (required when cache-backend=redis; also enables cross-instance dedup when cache-backend=memory)")
 	flag.DurationVar(&c.CacheTTL, "cache-ttl", envDuration("CACHE_TTL", 60*time.Second),
 		"cache TTL for frames")
 	flag.IntVar(&c.CacheMaxKeys, "cache-max-keys", envInt("CACHE_MAX_KEYS", 0),

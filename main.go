@@ -139,10 +139,12 @@ func run() error {
 	if redisCache == nil && cfg.RedisAddr != "" {
 		redisCache, err = redis.New(cfg.RedisAddr, "bre:dedup:")
 		if err != nil {
-			return fmt.Errorf("redis dedup: %w", err)
+			slog.Warn("redis dedup unavailable, running without cross-instance dedup", "addr", cfg.RedisAddr, "err", err)
+			redisCache = nil
+		} else {
+			defer func() { _ = redisCache.Close() }()
+			slog.Info("cross-instance dedup enabled", "addr", cfg.RedisAddr)
 		}
-		defer func() { _ = redisCache.Close() }()
-		slog.Info("cross-instance dedup enabled", "addr", cfg.RedisAddr)
 	}
 
 	// Build multicast groups for ingress.

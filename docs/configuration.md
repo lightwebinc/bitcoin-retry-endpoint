@@ -144,8 +144,9 @@ Set to match or exceed `-cache-ttl` to prevent double-retransmit on cache miss.
 
 ## Rate Limiting
 
-Two independent levels are applied in order before any cache work. All drops are
-silent (no response is sent).
+Four tiers applied in order. Tiers 1–3 are pre-lookup; drops are silent (no
+response sent). Tier 4 is post-lookup: the retransmit is skipped but an ACK is
+still sent so the listener does not escalate to the next endpoint.
 
 ### `-rl-ip-rate` / `RL_IP_RATE` (default: `100`)
 
@@ -166,10 +167,34 @@ server with repeated NACKs for the same gap.
 
 Sliding window duration for the per-`LookupSeq` counter.
 
+### `-rl-chain-rate` / `RL_CHAIN_RATE` (default: `500`)
+
+Maximum NACK requests allowed within `-rl-chain-window` for a given
+`(srcIP, ChainID)` pair. `ChainID` is the initial `CurSeq` of the hash-chain
+carried in the NACK datagram (offset 16). A `ChainID` of `0` (orphan/unattributed
+gap) bypasses this tier entirely.
+
+### `-rl-chain-window` / `RL_CHAIN_WINDOW` (default: `1m`)
+
+Sliding window duration for the per-`(srcIP, ChainID)` counter.
+
 ### `-rl-sender-rate` / `RL_SENDER_RATE`, `-rl-sender-window` / `RL_SENDER_WINDOW`
 
-**Deprecated no-ops.** `SenderID` was removed from the BRC-124 NACK wire format.
-These flags are accepted for backwards compatibility but have no effect.
+Backward-compatible aliases for `-rl-chain-rate` / `-rl-chain-window`. If the
+alias is set and the canonical flag is not, the alias value takes precedence.
+New deployments should use the canonical names.
+
+### `-rl-group-rate` / `RL_GROUP_RATE` (default: `200`)
+
+Token replenishment rate for the per-`(srcIP, groupIdx)` retransmit limiter
+(tokens per second). Applied **post-lookup** on cache hits only. When the bucket
+is exhausted the retransmit is suppressed but an ACK is still returned.
+
+### `-rl-group-burst` / `RL_GROUP_BURST` (default: `50`)
+
+Burst size for the per-`(srcIP, groupIdx)` token bucket. `groupIdx` is derived
+from the frame TxID using the same `shard.Engine` as the multicast egress path
+(`-shard-bits` must match).
 
 ---
 
@@ -287,7 +312,7 @@ Metric export interval for the OTLP push exporter. Ignored when
 | `bre_cache_misses_total` | NACK requests with no cached frame |
 | `bre_retransmits_total` | Frames sent to multicast egress |
 | `bre_retransmit_dedup_total` | Retransmits skipped by cross-instance dedup (Redis backend only) |
-| `bre_rate_limit_drops_total{level=ip\|sequence}` | Requests dropped by rate limiter |
+| `bre_rate_limit_drops_total{level=ip\|chain\|sequence\|group}` | Requests dropped (or retransmit suppressed) by rate limiter tier |
 
 ---
 

@@ -64,8 +64,9 @@ gap fill) even when the listener only knows the previous frame's `CurSeq`.
 `[nackBindAddr]:nack-port`. Each worker:
 
 1. Reads one 24-byte NACK datagram (BRC-126 wire format).
-2. Applies two-level rate limiting (per-IP token bucket, per-LookupSeq sliding
-   window). Drops exceeding the limit are silent.
+2. Applies four-tier rate limiting (per-IP, per-chain, per-sequence pre-lookup;
+   per-group post-lookup). Pre-lookup drops are silent. The group tier skips
+   the retransmit but still sends ACK so the listener does not escalate.
 3. Looks up the frame in the cache by `LookupType` + `LookupSeq`.
 4. On **hit**: dispatches `retransmit.Send`, then sends a 16-byte ACK (unless
    `-suppress-ack`).
@@ -82,7 +83,7 @@ Offset  Size  Field        Value / notes
      6     1  MsgType      0x10 (NACK)
      7     1  LookupType   0x00 = by PrevSeq; 0x01 = by CurSeq
      8     8  LookupSeq    uint64 BE; the XXH64 hash to look up
-    16     8  Reserved     0x00
+    16     8  ChainID      uint64 BE; initial CurSeq of the chain; 0 = orphan gap
 ```
 
 ### ACK/MISS wire format — 16 bytes
@@ -173,15 +174,19 @@ kernel may route `FF05::` via the management interface (lower-metric default rou
 
 ## Rate limiting
 
-Two levels, applied in order before any cache lookup:
+Four tiers applied in order. Pre-lookup tiers drop silently (no response sent).
+The post-lookup group tier skips the retransmit but still sends ACK — the
+listener must not escalate when the frame is available.
 
-| Level | Algorithm | Config flags |
-|-------|-----------|-------------|
-| Per source IP | Token bucket | `-rl-ip-rate`, `-rl-ip-burst` |
-| Per `LookupSeq` | Sliding window counter | `-rl-sequence-max`, `-rl-sequence-window` |
+| # | Level | Algorithm | Position | Config flags |
+|---|-------|-----------|----------|--------------|
+| 1 | Per source IP | Token bucket | Pre-lookup | `-rl-ip-rate`, `-rl-ip-burst` |
+| 2 | Per (srcIP, ChainID) | Sliding window | Pre-lookup | `-rl-chain-rate`, `-rl-chain-window` |
+| 3 | Per `LookupSeq` | Sliding window | Pre-lookup | `-rl-sequence-max`, `-rl-sequence-window` |
+| 4 | Per (srcIP, groupIdx) | Token bucket | Post-lookup | `-rl-group-rate`, `-rl-group-burst` |
 
-All drops are silent (no response sent). `SenderID` was removed from the BRC-124
-NACK wire format and is no longer a rate-limiting key.
+`ChainID=0` (orphan/unattributed gap) bypasses tier 2 to avoid bucketing all
+unattributed gaps from the same source together.
 
 ## Graceful shutdown
 
@@ -206,7 +211,7 @@ bitcoin-retry-endpoint/
   server/          UDP NACK receive pool; rate-limit → cache lookup → retransmit
   retransmit/      multicast + unicast retransmit egress; cross-instance dedup
   beacon/          ADVERT beacon sender; IPV6_MULTICAST_IF binding
-  ratelimit/       per-IP token bucket + per-LookupSeq sliding window
+  ratelimit/       four-tier rate limiter (IP, chain, sequence, group)
   metrics/         OTel + Prometheus instrumentation (bre_ prefix)
 ```
 

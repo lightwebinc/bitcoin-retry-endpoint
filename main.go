@@ -222,6 +222,24 @@ func run() error {
 		rec.Serve(cfg.MetricsAddr, done)
 	}()
 
+	// Start cache size sampler (samples Len() every 15s if the backend supports it).
+	if sizer, ok := c.(interface{ Len() int }); ok {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			t := time.NewTicker(15 * time.Second)
+			defer t.Stop()
+			for {
+				select {
+				case <-t.C:
+					rec.CacheSize(int64(sizer.Len()))
+				case <-ctx.Done():
+					return
+				}
+			}
+		}()
+	}
+
 	// Start ingress worker.
 	wg.Add(1)
 	go func() {

@@ -83,6 +83,14 @@ func (c *Cache) Delete(key []byte) error {
 	return nil
 }
 
+// Len returns the current number of entries in the cache (including expired
+// entries not yet swept by the background GC).
+func (c *Cache) Len() int {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return len(c.data)
+}
+
 // Close releases resources and stops the background GC.
 func (c *Cache) Close() error {
 	c.stopGC <- struct{}{}

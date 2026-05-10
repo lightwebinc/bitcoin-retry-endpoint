@@ -294,6 +294,7 @@ func run() error {
 			Iface:       beaconIface,
 		}
 		beaconSender := beacon.New(beaconCfg)
+		beaconSender.SetRecorder(rec)
 		wg.Add(1)
 		go func() {
 			defer wg.Done()

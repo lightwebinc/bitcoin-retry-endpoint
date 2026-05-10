@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/lightwebinc/bitcoin-retry-endpoint/metrics"
 	"github.com/lightwebinc/bitcoin-shard-common/frame"
 	"github.com/lightwebinc/bitcoin-shard-common/shard"
 )
@@ -47,6 +48,7 @@ type Config struct {
 type Sender struct {
 	cfg Config
 	log *slog.Logger
+	rec *metrics.Recorder // nil = no metrics
 }
 
 // New creates a beacon Sender.
@@ -58,6 +60,11 @@ func New(cfg Config) *Sender {
 		cfg: cfg,
 		log: slog.Default().With("component", "beacon"),
 	}
+}
+
+// SetRecorder attaches a metrics recorder for counting sent ADVERTs.
+func (s *Sender) SetRecorder(rec *metrics.Recorder) {
+	s.rec = rec
 }
 
 // Run starts the beacon loop. Blocks until ctx is cancelled.
@@ -129,6 +136,8 @@ func (s *Sender) send(conns []*net.UDPConn, buf []byte) {
 	for _, conn := range conns {
 		if _, err := conn.Write(buf); err != nil {
 			s.log.Debug("beacon send error", "err", err)
+		} else if s.rec != nil {
+			s.rec.BeaconAdvertSent()
 		}
 	}
 }

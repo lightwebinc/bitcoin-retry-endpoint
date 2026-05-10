@@ -57,6 +57,9 @@ type Recorder struct {
 	framesReceived metric.Int64Counter
 	framesCached   metric.Int64Counter
 	framesDropped  metric.Int64Counter
+
+	// Beacon sender metrics
+	beaconAdvertsSent metric.Int64Counter
 }
 
 func New(instanceID string, numWorkers int, otlpEndpoint string, otlpInterval time.Duration) (*Recorder, error) {
@@ -188,6 +191,10 @@ func New(instanceID string, numWorkers int, otlpEndpoint string, otlpInterval ti
 		metric.WithDescription("Frames dropped")); err != nil {
 		return nil, err
 	}
+	if r.beaconAdvertsSent, err = meter.Int64Counter("bre_beacon_adverts_sent_total",
+		metric.WithDescription("ADVERT beacon datagrams sent to the discovery multicast group")); err != nil {
+		return nil, err
+	}
 
 	return r, nil
 }
@@ -253,6 +260,11 @@ func (r *Recorder) FrameDropped(reason string) {
 	r.framesDropped.Add(context.Background(), 1, metric.WithAttributes(
 		attribute.String("reason", reason),
 	))
+}
+
+// BeaconAdvertSent records an ADVERT beacon datagram sent successfully.
+func (r *Recorder) BeaconAdvertSent() {
+	r.beaconAdvertsSent.Add(context.Background(), 1)
 }
 
 func (r *Recorder) WorkerReady() {

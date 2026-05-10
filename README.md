@@ -32,7 +32,7 @@ bitcoin-shard-proxy ──multicast──▶ FF05::<shard>:9001
 
 ## Requirements
 
-- Go 1.22 or later
+- Go 1.25 or later
 - Linux kernel 3.9+ (for `SO_REUSEPORT`)
 - IPv6 enabled on the multicast fabric interface
 - Multicast routing configured for the same scope as proxy and listeners

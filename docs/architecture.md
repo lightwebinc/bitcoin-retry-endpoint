@@ -3,7 +3,7 @@
 ## Overview
 
 `bitcoin-retry-endpoint` sits alongside `bitcoin-shard-listener` on the multicast
-fabric. It joins all shard groups, caches every BRC-124 frame it receives, and
+fabric. It joins all shard groups, caches every BRC-124/BRC-128 frame it receives, and
 serves unicast NACK requests from listeners that detect sequence gaps. On a cache
 hit it retransmits the frame via multicast egress and/or directly to the requesting
 listener via unicast, then sends an ACK response. On a miss it sends a MISS
@@ -217,7 +217,7 @@ Protocol primitives are provided by
 
 ```
 bitcoin-shard-common/
-  frame/    v1/BRC-124 wire format: Decode, Encode, constants, errors
+  frame/    BRC-12/BRC-124/BRC-128 wire format: Decode, Encode, constants, errors
   shard/    txid → group index → IPv6 multicast address derivation
   seqhash/  XXH64 hash chain for PrevSeq/CurSeq stamping
 ```

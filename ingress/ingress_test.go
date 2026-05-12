@@ -48,7 +48,7 @@ func (m *mockCache) storeAt(i int) storeCall {
 	return m.stores[i]
 }
 
-// buildRaw encodes a v2 frame with the given PrevSeq, CurSeq, and payload.
+// buildRaw encodes a BRC-124/BRC-128 frame with the given PrevSeq, CurSeq, and payload.
 func buildRaw(t *testing.T, prevSeq, curSeq uint64, payload []byte) []byte {
 	t.Helper()
 	f := &frame.Frame{

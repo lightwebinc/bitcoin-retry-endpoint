@@ -8,7 +8,7 @@
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
 Caching endpoint for NACK-based retransmission in the BSV multicast pipeline.
-Receives BRC-124 frames from the multicast fabric, caches them, and retransmits
+Receives BRC-124/BRC-128 frames from the multicast fabric, caches them, and retransmits
 on demand to `bitcoin-shard-listener` nodes that detect sequence gaps.
 
 ```

@@ -1,5 +1,7 @@
 # bitcoin-retry-endpoint
 
+[![CI](https://github.com/lightwebinc/bitcoin-retry-endpoint/actions/workflows/ci.yml/badge.svg)](https://github.com/lightwebinc/bitcoin-retry-endpoint/actions/workflows/ci.yml)
+
 Caching endpoint for NACK-based retransmission in the BSV multicast pipeline.
 Receives BRC-124 frames from the multicast fabric, caches them, and retransmits
 on demand to `bitcoin-shard-listener` nodes that detect sequence gaps.

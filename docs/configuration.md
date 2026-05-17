@@ -20,12 +20,12 @@ UDP port for multicast frame receive. Must match the proxy's `-egress-port`.
 
 Multicast scope nibble. Must match the proxy's and listeners' `-scope`.
 
-| Value | Prefix | Reach |
-|----------|--------|-----------------------------------------------------|
-| `link` | `FF02` | Same L2 segment only |
-| `site` | `FF05` | Site-local; crosses routers within a site (default) |
-| `org` | `FF08` | Organisation-wide |
-| `global` | `FF0E` | Internet-wide |
+| Value    | Prefix | Reach                                               |
+| -------- | ------ | --------------------------------------------------- |
+| `link`   | `FF02` | Same L2 segment only                                |
+| `site`   | `FF05` | Site-local; crosses routers within a site (default) |
+| `org`    | `FF08` | Organisation-wide                                   |
+| `global` | `FF0E` | Internet-wide                                       |
 
 ### `-mc-group-id` / `MC_GROUP_ID` (default: `0x000B`)
 
@@ -42,12 +42,12 @@ Default `0x000B` corresponds to the IANA-assigned Bitcoin allocation
 Txid prefix bit width used as the shard key. Must exactly match the proxy's
 `-shard-bits`. Determines how many multicast groups the endpoint joins (2ᴺ).
 
-| Bits | Groups |
-|------|--------|
-| 1 | 2 |
-| 8 | 256 |
-| 12 | 4 096 |
-| 15 | 32 768 (max; top of 16-bit space reserved for control) |
+| Bits | Groups                                                 |
+| ---- | ------------------------------------------------------ |
+| 1    | 2                                                      |
+| 8    | 256                                                    |
+| 12   | 4 096                                                  |
+| 15   | 32 768 (max; top of 16-bit space reserved for control) |
 
 ---
 
@@ -57,20 +57,20 @@ Txid prefix bit width used as the shard key. Must exactly match the proxy's
 
 Cache storage backend. Valid values: `memory`, `redis`.
 
-| Value | Storage | Cross-instance dedup | Notes |
-|--------|---------|---------------------|-------|
-| `memory` | In-process freecache | None | Single-node; lost on restart |
-| `redis` | External Redis | SET NX per frame | Shared; survives restart |
+| Value    | Storage              | Cross-instance dedup | Notes                        |
+| -------- | -------------------- | -------------------- | ---------------------------- |
+| `memory` | In-process freecache | None                 | Single-node; lost on restart |
+| `redis`  | External Redis       | SET NX per frame     | Shared; survives restart     |
 
 ### `-redis-addr` / `REDIS_ADDR` (default: empty)
 
 Redis server address. Behaviour depends on `-cache-backend`:
 
-| `-cache-backend` | `REDIS_ADDR` set | Behaviour |
-|------------------|-----------------|----------|
-| `memory` | no | freecache only; no cross-instance dedup |
-| `memory` | yes | freecache for frames; Redis used **only** for `SET NX` dedup |
-| `redis` | yes (required) | Redis for both frame storage and dedup |
+| `-cache-backend` | `REDIS_ADDR` set | Behaviour                                                    |
+| ---------------- | ---------------- | ------------------------------------------------------------ |
+| `memory`         | no               | freecache only; no cross-instance dedup                      |
+| `memory`         | yes              | freecache for frames; Redis used **only** for `SET NX` dedup |
+| `redis`          | yes (required)   | Redis for both frame storage and dedup                       |
 
 When `REDIS_ADDR` is empty and `CACHE_BACKEND=redis`, startup fails with an
 explicit error. When `CACHE_BACKEND=memory` and `REDIS_ADDR` is set, the frame
@@ -242,11 +242,11 @@ seconds field). Listeners evict endpoints that have not sent an ADVERT within
 
 Multicast scope for ADVERT datagrams.
 
-| Value | Group | Use case |
-|--------|-------|----------|
-| `site` | `FF05::B:FFFD` | All listeners on the local site |
-| `global` | `FF0E::B:FFFD` | Inter-AS via MP-BGP MVPN |
-| `both` | both groups | Site + global simultaneously (two ADVERTs per interval) |
+| Value    | Group          | Use case                                                |
+| -------- | -------------- | ------------------------------------------------------- |
+| `site`   | `FF05::B:FFFD` | All listeners on the local site                         |
+| `global` | `FF0E::B:FFFD` | Inter-AS via MP-BGP MVPN                                |
+| `both`   | both groups    | Site + global simultaneously (two ADVERTs per interval) |
 
 Org scope (`FF08::B:FFFD`, wire byte `0x08`) is defined in the BRC-126 wire format but `org` is not a supported flag value.
 
@@ -292,6 +292,7 @@ duration. Useful for rolling restarts behind a load balancer.
 ### `-metrics-addr` / `METRICS_ADDR` (default: `:9400`)
 
 HTTP bind address for:
+
 - `GET /metrics` — Prometheus scrape endpoint (`bre_` prefix)
 - `GET /healthz` — always `200 OK` while the process is running
 - `GET /readyz` — `200` when ready; `503` while starting or draining
@@ -315,15 +316,15 @@ Metric export interval for the OTLP push exporter. Ignored when
 
 ## Key metrics
 
-| Metric | Description |
-|--------|-------------|
-| `bre_frames_received_total` | Frames received from multicast fabric |
-| `bre_frames_cached_total` | Frames successfully written to cache |
-| `bre_cache_hits_total` | NACK requests resolved from cache |
-| `bre_cache_misses_total` | NACK requests with no cached frame |
-| `bre_retransmits_total` | Frames sent to multicast egress |
-| `bre_retransmit_dedup_total` | Retransmits skipped by cross-instance dedup (requires `REDIS_ADDR`) |
-| `bre_rate_limit_drops_total{level=ip\|hashkey\|sequence\|group}` | Requests dropped (or retransmit suppressed) by rate limiter tier |
+| Metric                                                           | Description                                                         |
+| ---------------------------------------------------------------- | ------------------------------------------------------------------- |
+| `bre_frames_received_total`                                      | Frames received from multicast fabric                               |
+| `bre_frames_cached_total`                                        | Frames successfully written to cache                                |
+| `bre_cache_hits_total`                                           | NACK requests resolved from cache                                   |
+| `bre_cache_misses_total`                                         | NACK requests with no cached frame                                  |
+| `bre_retransmits_total`                                          | Frames sent to multicast egress                                     |
+| `bre_retransmit_dedup_total`                                     | Retransmits skipped by cross-instance dedup (requires `REDIS_ADDR`) |
+| `bre_rate_limit_drops_total{level=ip\|hashkey\|sequence\|group}` | Requests dropped (or retransmit suppressed) by rate limiter tier    |
 
 ---
 

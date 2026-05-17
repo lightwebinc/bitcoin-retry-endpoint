@@ -48,13 +48,13 @@ func (m *mockCache) storeAt(i int) storeCall {
 	return m.stores[i]
 }
 
-// buildRaw encodes a BRC-124/BRC-128 frame with the given PrevSeq, CurSeq, and payload.
-func buildRaw(t *testing.T, prevSeq, curSeq uint64, payload []byte) []byte {
+// buildRaw encodes a BRC-124/BRC-128 frame with the given HashKey, SeqNum, and payload.
+func buildRaw(t *testing.T, hashKey, seqNum uint64, payload []byte) []byte {
 	t.Helper()
 	f := &frame.Frame{
 		Version: frame.FrameVerV2,
-		PrevSeq: prevSeq,
-		CurSeq:  curSeq,
+		HashKey: hashKey,
+		SeqNum:  seqNum,
 		Payload: payload,
 	}
 	f.TxID[0] = 0xAB
@@ -73,58 +73,39 @@ func newTestWorker(mc *mockCache) *Worker {
 	}
 }
 
-func TestProcessFrame_DualIndex(t *testing.T) {
+func TestProcessFrame_SingleIndex(t *testing.T) {
 	mc := &mockCache{}
 	w := newTestWorker(mc)
 
-	prevSeq := uint64(0xAABBCCDDEEFF0011)
-	curSeq := uint64(0x1122334455667788)
-	raw := buildRaw(t, prevSeq, curSeq, []byte("tx-payload"))
+	hashKey := uint64(0xAABBCCDDEEFF0011)
+	seqNum := uint64(0x1122334455667788)
+	raw := buildRaw(t, hashKey, seqNum, []byte("tx-payload"))
 
 	w.processFrame(raw)
 
-	if mc.storeCount() != 2 {
-		t.Fatalf("expected 2 Store calls, got %d", mc.storeCount())
+	if mc.storeCount() != 1 {
+		t.Fatalf("expected 1 Store call, got %d", mc.storeCount())
 	}
 
-	// Primary: key = 0x01 || SubtreeID(32) || CurSeq → raw frame
-	pk := mc.storeAt(0)
-	if len(pk.key) != 41 {
-		t.Errorf("primary key len = %d, want 41", len(pk.key))
+	// Single key: HashKey (8B) || SeqNum (8B) → raw frame
+	entry := mc.storeAt(0)
+	if len(entry.key) != 16 {
+		t.Errorf("key len = %d, want 16", len(entry.key))
 	}
-	if pk.key[0] != 0x01 {
-		t.Errorf("primary key prefix = 0x%02X, want 0x01", pk.key[0])
+	gotHashKey := binary.BigEndian.Uint64(entry.key[0:8])
+	if gotHashKey != hashKey {
+		t.Errorf("key HashKey = 0x%016X, want 0x%016X", gotHashKey, hashKey)
 	}
-	gotCurSeq := binary.BigEndian.Uint64(pk.key[33:41])
-	if gotCurSeq != curSeq {
-		t.Errorf("primary key CurSeq = 0x%016X, want 0x%016X", gotCurSeq, curSeq)
+	gotSeqNum := binary.BigEndian.Uint64(entry.key[8:16])
+	if gotSeqNum != seqNum {
+		t.Errorf("key SeqNum = 0x%016X, want 0x%016X", gotSeqNum, seqNum)
 	}
-	if len(pk.val) != len(raw) {
-		t.Errorf("primary value len = %d, want %d", len(pk.val), len(raw))
-	}
-
-	// Secondary: key = 0x00 || SubtreeID(32) || PrevSeq → CurSeq (8 bytes)
-	sk := mc.storeAt(1)
-	if len(sk.key) != 41 {
-		t.Errorf("secondary key len = %d, want 41", len(sk.key))
-	}
-	if sk.key[0] != 0x00 {
-		t.Errorf("secondary key prefix = 0x%02X, want 0x00", sk.key[0])
-	}
-	gotPrevSeq := binary.BigEndian.Uint64(sk.key[33:41])
-	if gotPrevSeq != prevSeq {
-		t.Errorf("secondary key PrevSeq = 0x%016X, want 0x%016X", gotPrevSeq, prevSeq)
-	}
-	if len(sk.val) != 8 {
-		t.Fatalf("secondary value len = %d, want 8", len(sk.val))
-	}
-	gotPtr := binary.BigEndian.Uint64(sk.val)
-	if gotPtr != curSeq {
-		t.Errorf("secondary value CurSeq = 0x%016X, want 0x%016X", gotPtr, curSeq)
+	if len(entry.val) != len(raw) {
+		t.Errorf("value len = %d, want %d", len(entry.val), len(raw))
 	}
 }
 
-func TestProcessFrame_ZeroCurSeq_Skip(t *testing.T) {
+func TestProcessFrame_ZeroSeqNum_Skip(t *testing.T) {
 	mc := &mockCache{}
 	w := newTestWorker(mc)
 
@@ -132,24 +113,24 @@ func TestProcessFrame_ZeroCurSeq_Skip(t *testing.T) {
 	w.processFrame(raw)
 
 	if mc.storeCount() != 0 {
-		t.Errorf("expected 0 Store calls for CurSeq=0, got %d", mc.storeCount())
+		t.Errorf("expected 0 Store calls for SeqNum=0, got %d", mc.storeCount())
 	}
 }
 
-func TestProcessFrame_ZeroPrevSeq_PrimaryOnly(t *testing.T) {
+func TestProcessFrame_ZeroHashKey_Stored(t *testing.T) {
 	mc := &mockCache{}
 	w := newTestWorker(mc)
 
-	curSeq := uint64(0xFFEEDDCCBBAA9988)
-	raw := buildRaw(t, 0, curSeq, []byte("first-in-chain"))
+	seqNum := uint64(0xFFEEDDCCBBAA9988)
+	raw := buildRaw(t, 0, seqNum, []byte("first-in-flow"))
 	w.processFrame(raw)
 
 	if mc.storeCount() != 1 {
-		t.Fatalf("expected 1 Store call for PrevSeq=0, got %d", mc.storeCount())
+		t.Fatalf("expected 1 Store call, got %d", mc.storeCount())
 	}
-	pk := mc.storeAt(0)
-	if pk.key[0] != 0x01 {
-		t.Errorf("key prefix = 0x%02X, want 0x01 (primary)", pk.key[0])
+	entry := mc.storeAt(0)
+	if len(entry.key) != 16 {
+		t.Errorf("key len = %d, want 16", len(entry.key))
 	}
 }
 
@@ -168,7 +149,7 @@ func TestProcessFrame_TTLPropagated(t *testing.T) {
 	w := newTestWorker(mc)
 	w.ttl = 42 * time.Second
 
-	raw := buildRaw(t, 0x11, 0x22, nil)
+	raw := buildRaw(t, 0x1111111111111111, 0x22, nil)
 	w.processFrame(raw)
 
 	if mc.storeCount() < 1 {

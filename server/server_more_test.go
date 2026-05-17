@@ -16,8 +16,8 @@ func TestProcessNACK_IPRateLimit_DropsRequest(t *testing.T) {
 	rt := &mockRetransmitter{}
 	conn := &mockPacketConn{}
 
-	const curSeq uint64 = 0xCAFE0003
-	storePrimary(mc, curSeq, buildCacheFrame(t, curSeq))
+	const seqNum uint64 = 0xCAFE0003
+	storeFrame(mc, 0, seqNum, buildCacheFrame(t, seqNum))
 
 	// Tight IP limiter: burst=1, rate=1/s
 	tightRL := ratelimit.New(ratelimit.Config{
@@ -34,28 +34,28 @@ func TestProcessNACK_IPRateLimit_DropsRequest(t *testing.T) {
 	src := &net.UDPAddr{IP: net.IPv6loopback, Port: 12345}
 
 	// First passes
-	s.processNACK(conn, 0, buildNACK(msgTypeNACK, lookupByCurSeq, curSeq), src)
+	s.processNACK(conn, 0, buildNACK(msgTypeNACK, 0, seqNum, seqNum), src)
 	if !rt.called {
 		t.Fatal("first IP request should pass")
 	}
 	rt.called = false
-	s.processNACK(conn, 0, buildNACK(msgTypeNACK, lookupByCurSeq, curSeq), src)
+	s.processNACK(conn, 0, buildNACK(msgTypeNACK, 0, seqNum, seqNum), src)
 	if rt.called {
 		t.Error("second request should be IP-rate-limited")
 	}
 }
 
-func TestProcessNACK_UnknownLookupType(t *testing.T) {
+func TestProcessNACK_RangeNACK_DropsRequest(t *testing.T) {
 	mc := newMockCache()
 	rt := &mockRetransmitter{}
 	conn := &mockPacketConn{}
 
 	s := New(9300, mc, permissiveRL(), nil, rt, 1, false)
 	src := &net.UDPAddr{IP: net.IPv6loopback, Port: 12345}
-	// LookupType = 0x99 (unknown) → silently dropped
-	s.processNACK(conn, 0, buildNACK(msgTypeNACK, 0x99, 0x1234), src)
+	// StartSeq != EndSeq → range NACK not yet supported, silently dropped
+	s.processNACK(conn, 0, buildNACK(msgTypeNACK, 0, 0x1234, 0x1235), src)
 	if rt.called || len(conn.written) != 0 {
-		t.Errorf("unknown lookup type should be dropped silently")
+		t.Errorf("range NACK should be silently dropped")
 	}
 }
 
@@ -87,8 +87,8 @@ func TestRun_StartStop(t *testing.T) {
 	port := probe.LocalAddr().(*net.UDPAddr).Port
 	_ = probe.Close()
 
-	const curSeq uint64 = 0xC0DECAFE
-	storePrimary(mc, curSeq, buildCacheFrame(t, curSeq))
+	const seqNum uint64 = 0xC0DECAFE
+	storeFrame(mc, 0, seqNum, buildCacheFrame(t, seqNum))
 
 	s := New(port, mc, permissiveRL(), nil, rt, 2, false)
 	s.SetBindAddr("::1")
@@ -108,7 +108,7 @@ func TestRun_StartStop(t *testing.T) {
 	}
 	defer func() { _ = c.Close() }()
 	_ = c.SetReadDeadline(time.Now().Add(time.Second))
-	_, _ = c.Write(buildNACK(msgTypeNACK, lookupByCurSeq, curSeq))
+	_, _ = c.Write(buildNACK(msgTypeNACK, 0, seqNum, seqNum))
 
 	// Read ACK response.
 	buf := make([]byte, ResponseSize)
@@ -120,8 +120,8 @@ func TestRun_StartStop(t *testing.T) {
 		t.Errorf("bad response: n=%d type=0x%02X", n, buf[6])
 	}
 	gotSeq := binary.BigEndian.Uint64(buf[8:16])
-	if gotSeq != curSeq {
-		t.Errorf("ACK seq mismatch: 0x%X want 0x%X", gotSeq, curSeq)
+	if gotSeq != seqNum {
+		t.Errorf("ACK seq mismatch: 0x%X want 0x%X", gotSeq, seqNum)
 	}
 
 	cancel()

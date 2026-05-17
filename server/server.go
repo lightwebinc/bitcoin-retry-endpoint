@@ -18,8 +18,8 @@ import (
 	"github.com/lightwebinc/bitcoin-retry-endpoint/ratelimit"
 )
 
-// NACKSize is the fixed size of a BRC-126 NACK datagram (56 bytes).
-const NACKSize = 56
+// NACKSize is the fixed size of a BRC-126 NACK datagram (64 bytes).
+const NACKSize = 64
 
 // ResponseSize is the fixed size of a BRC-126 ACK or MISS response (16 bytes).
 const ResponseSize = 16
@@ -29,11 +29,6 @@ const (
 	msgTypeNACK byte = 0x10
 	msgTypeMISS byte = 0x11
 	msgTypeACK  byte = 0x12
-
-	// lookupByPrevSeq requests the frame whose PrevSeq equals LookupSeq.
-	lookupByPrevSeq byte = 0x00
-	// lookupByCurSeq requests the frame whose CurSeq equals LookupSeq.
-	lookupByCurSeq byte = 0x01
 )
 
 // Server receives NACK requests and coordinates retransmissions.
@@ -195,17 +190,23 @@ func (s *Server) processNACK(conn net.PacketConn, workerID int, datagram []byte,
 		s.rec.NACKRequest()
 	}
 
-	// Validate 56-byte NACK format.
+	// Validate 64-byte NACK format.
 	if err := validateNACK(datagram); err != nil {
 		s.log.Debug("invalid NACK", "err", err)
 		return
 	}
 
-	lookupType := datagram[7]
-	lookupSeq := binary.BigEndian.Uint64(datagram[8:16])
-	chainID := binary.BigEndian.Uint64(datagram[16:24])
-	var subtreeID [32]byte
-	copy(subtreeID[:], datagram[24:56])
+	// datagram[7] = Flags (reserved, ignored)
+	hashKey := binary.BigEndian.Uint64(datagram[8:16])
+	startSeq := binary.BigEndian.Uint64(datagram[16:24])
+	endSeq := binary.BigEndian.Uint64(datagram[24:32])
+
+	// For now only single-frame retrieval is implemented (StartSeq == EndSeq).
+	// Range requests (StartSeq < EndSeq) are reserved for future use.
+	if endSeq != startSeq {
+		s.log.Debug("range NACK not supported", "start_seq", startSeq, "end_seq", endSeq)
+		return
+	}
 
 	// Rate limiting: tier 1 (IP) + tier 3 (sequence), pre-lookup.
 	var srcIP net.IP
@@ -214,7 +215,7 @@ func (s *Server) processNACK(conn net.PacketConn, workerID int, datagram []byte,
 	} else {
 		srcIP = net.IPv6unspecified
 	}
-	allowed, level := s.rateLimiter.Allow(srcIP, lookupSeq)
+	allowed, level := s.rateLimiter.Allow(srcIP, startSeq)
 	if !allowed {
 		if s.rec != nil {
 			s.rec.RateLimitDrop(string(level))
@@ -225,79 +226,37 @@ func (s *Server) processNACK(conn net.PacketConn, workerID int, datagram []byte,
 		return
 	}
 
-	// Rate limiting: tier 2 (chain), pre-lookup.
-	if !s.rateLimiter.AllowChain(srcIP, chainID) {
+	// Rate limiting: tier 2 (flow/hashKey), pre-lookup.
+	if !s.rateLimiter.AllowChain(srcIP, hashKey) {
 		if s.rec != nil {
 			s.rec.RateLimitDrop(string(ratelimit.LevelChain))
 		}
 		if s.debug {
-			s.log.Debug("rate limited", "level", ratelimit.LevelChain, "chain_id", chainID)
+			s.log.Debug("rate limited", "level", ratelimit.LevelChain, "hash_key", hashKey)
 		}
 		return
 	}
 
-	// Retrieve raw frame from dual-index cache.
-	var raw []byte
-	var curSeq uint64
-
-	switch lookupType {
-	case lookupByCurSeq:
-		// Primary index: {0x01, SubtreeID, CurSeq} → raw frame
-		var pk [41]byte
-		pk[0] = lookupByCurSeq
-		copy(pk[1:33], subtreeID[:])
-		binary.BigEndian.PutUint64(pk[33:41], lookupSeq)
-		v, err := s.cache.Retrieve(pk[:])
-		if err != nil {
-			if s.rec != nil {
-				s.rec.CacheError()
-			}
-			s.log.Error("cache retrieve error", "err", err)
-			return
+	// Retrieve raw frame from cache using single 16-byte key: HashKey || SeqNum.
+	var key [16]byte
+	binary.BigEndian.PutUint64(key[0:8], hashKey)
+	binary.BigEndian.PutUint64(key[8:16], startSeq)
+	raw, err := s.cache.Retrieve(key[:])
+	if err != nil {
+		if s.rec != nil {
+			s.rec.CacheError()
 		}
-		raw = v
-		curSeq = lookupSeq
-	case lookupByPrevSeq:
-		// Secondary index: {0x00, SubtreeID, PrevSeq} → CurSeq (8 bytes)
-		var sk [41]byte
-		sk[0] = lookupByPrevSeq
-		copy(sk[1:33], subtreeID[:])
-		binary.BigEndian.PutUint64(sk[33:41], lookupSeq)
-		ptr, err := s.cache.Retrieve(sk[:])
-		if err != nil {
-			if s.rec != nil {
-				s.rec.CacheError()
-			}
-			s.log.Error("cache retrieve error (secondary)", "err", err)
-			return
-		}
-		if len(ptr) == 8 {
-			// Primary index: {0x01, SubtreeID, CurSeq} → raw frame
-			curSeq = binary.BigEndian.Uint64(ptr)
-			var pk [41]byte
-			pk[0] = lookupByCurSeq
-			copy(pk[1:33], subtreeID[:])
-			binary.BigEndian.PutUint64(pk[33:41], curSeq)
-			raw, err = s.cache.Retrieve(pk[:])
-			if err != nil {
-				if s.rec != nil {
-					s.rec.CacheError()
-				}
-				s.log.Error("cache retrieve error (primary via secondary)", "err", err)
-				return
-			}
-		}
-	default:
-		s.log.Debug("unknown NACK lookup type", "type", lookupType)
+		s.log.Error("cache retrieve error", "err", err)
 		return
 	}
+	seqNum := startSeq
 
 	if raw == nil {
 		if s.rec != nil {
 			s.rec.CacheMiss()
 		}
 		if s.debug {
-			s.log.Debug("cache miss", "lookup_type", lookupType, "lookup_seq", lookupSeq)
+			s.log.Debug("cache miss", "hash_key", hashKey, "start_seq", startSeq)
 		}
 		if !s.suppressMISS && src != nil {
 			s.sendResponse(conn, src, msgTypeMISS, 0, 0)
@@ -343,11 +302,11 @@ func (s *Server) processNACK(conn net.PacketConn, workerID int, datagram []byte,
 	}
 
 	if !s.suppressACK && src != nil {
-		s.sendResponse(conn, src, msgTypeACK, 0x01, curSeq)
+		s.sendResponse(conn, src, msgTypeACK, 0x01, seqNum)
 	}
 
 	if s.debug {
-		s.log.Debug("retransmitted frame", "txid", fmt.Sprintf("%x", txID[:8]), "cur_seq", curSeq)
+		s.log.Debug("retransmitted frame", "txid", fmt.Sprintf("%x", txID[:8]), "seq_num", seqNum)
 	}
 }
 
@@ -377,7 +336,7 @@ func (s *Server) sendResponse(conn net.PacketConn, src *net.UDPAddr, msgType byt
 	}
 }
 
-// validateNACK checks the NACK datagram format (56 bytes).
+// validateNACK checks the NACK datagram format (64 bytes).
 func validateNACK(datagram []byte) error {
 	if len(datagram) < NACKSize {
 		return fmt.Errorf("invalid NACK size: %d", len(datagram))

@@ -30,24 +30,8 @@ func (e *errCache) Store(_, _ []byte, _ time.Duration) error {
 
 func TestProcessFrame_PrimaryStoreError(t *testing.T) {
 	w := New(&net.Interface{Name: "lo"}, 0, nil, &errCache{}, nil, time.Minute, false)
-	raw := buildRaw(t, 0x11, 0x22, nil)
+	raw := buildRaw(t, 0x1111111111111111, 0x22, nil)
 	w.processFrame(raw) // must not panic; just logs
-}
-
-// secondaryErrCache returns success on prefix 0x01 but error on 0x00.
-type secondaryErrCache struct{ mockCache }
-
-func (e *secondaryErrCache) Store(key, val []byte, ttl time.Duration) error {
-	if len(key) > 0 && key[0] == 0x00 {
-		return errors.New("secondary fail")
-	}
-	return e.mockCache.Store(key, val, ttl)
-}
-
-func TestProcessFrame_SecondaryStoreError(t *testing.T) {
-	w := New(&net.Interface{Name: "lo"}, 0, nil, &secondaryErrCache{}, nil, time.Minute, false)
-	raw := buildRaw(t, 0x11, 0x22, nil)
-	w.processFrame(raw) // must not panic; primary succeeds, secondary logs
 }
 
 func TestRun_CtxCancelExits(t *testing.T) {

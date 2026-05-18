@@ -10,6 +10,7 @@ import (
 
 	"golang.org/x/sys/unix"
 
+	"github.com/lightwebinc/bitcoin-shard-common/frame"
 	"github.com/lightwebinc/bitcoin-shard-common/shard"
 
 	"github.com/lightwebinc/bitcoin-retry-endpoint/cache/redis"
@@ -108,9 +109,16 @@ func (r *Retransmitter) Retransmit(raw []byte, txID [32]byte) error {
 		}
 	}
 
-	// Derive multicast group from TxID.
-	groupIdx := r.engine.GroupIndex(&txID)
-	groupAddr := r.engine.Addr(groupIdx, r.egressPort)
+	// Derive multicast group: V4 block control frames route to CtrlGroupControl;
+	// all other frames route to the shard group derived from TxID.
+	var groupAddr *net.UDPAddr
+	if len(raw) >= 7 && raw[6] == frame.FrameVerV4 {
+		ctrlIP := shard.ControlGroupAddr(r.engine.Prefix(), r.engine.GroupID(), shard.CtrlGroupControl)
+		groupAddr = &net.UDPAddr{IP: ctrlIP, Port: r.egressPort}
+	} else {
+		groupIdx := r.engine.GroupIndex(&txID)
+		groupAddr = r.engine.Addr(groupIdx, r.egressPort)
+	}
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -129,7 +137,6 @@ func (r *Retransmitter) Retransmit(raw []byte, txID [32]byte) error {
 	if r.debug {
 		r.log.Debug("frame retransmitted",
 			"txid", fmt.Sprintf("%x", txID[:8]),
-			"group", groupIdx,
 			"group_addr", groupAddr.String(),
 		)
 	}

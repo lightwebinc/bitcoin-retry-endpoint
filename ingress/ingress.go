@@ -135,6 +135,13 @@ func (w *Worker) Run(ctx context.Context) error {
 }
 
 func (w *Worker) processFrame(raw []byte) {
+	// BRC-131 block control frames (FrameVer 0x04) are handled separately
+	// because frame.Decode rejects V4 with ErrBadVer.
+	if frame.IsBlockFrame(raw) {
+		w.processBlockFrame(raw)
+		return
+	}
+
 	f, err := frame.Decode(raw)
 	if err != nil {
 		if w.rec != nil {
@@ -175,6 +182,53 @@ func (w *Worker) processFrame(raw []byte) {
 			"txid", fmt.Sprintf("%x", f.TxID[:8]),
 			"hash_key", f.HashKey,
 			"seq_num", f.SeqNum,
+		)
+	}
+}
+
+// processBlockFrame handles BRC-131 block control frames (FrameVer 0x04).
+// Uses the same HashKey ∥ SeqNum cache key as regular frames.
+func (w *Worker) processBlockFrame(raw []byte) {
+	bf, err := frame.DecodeBlock(raw)
+	if err != nil {
+		if w.rec != nil {
+			w.rec.FrameDropped("decode_error")
+		}
+		if w.debug {
+			w.log.Debug("block frame decode error", "err", err, "len", len(raw))
+		}
+		return
+	}
+
+	if w.rec != nil {
+		w.rec.FrameReceived()
+	}
+
+	if bf.SeqNum == 0 {
+		return // proxy has not stamped this frame
+	}
+
+	var key [16]byte
+	binary.BigEndian.PutUint64(key[0:8], bf.HashKey)
+	binary.BigEndian.PutUint64(key[8:16], bf.SeqNum)
+	if err := w.cache.Store(key[:], raw, w.ttl); err != nil {
+		if w.rec != nil {
+			w.rec.CacheError()
+		}
+		w.log.Error("cache store error", "err", err)
+		return
+	}
+
+	if w.rec != nil {
+		w.rec.FrameCached()
+	}
+
+	if w.debug {
+		w.log.Debug("block frame cached",
+			"content_id", fmt.Sprintf("%x", bf.ContentID[:8]),
+			"msg_type", bf.MsgType,
+			"hash_key", bf.HashKey,
+			"seq_num", bf.SeqNum,
 		)
 	}
 }

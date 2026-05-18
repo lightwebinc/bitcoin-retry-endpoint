@@ -334,5 +334,11 @@ func buildGroups(cfg *config.Config, engine *shard.Engine) ([]*net.UDPAddr, erro
 		addr := engine.Addr(i, cfg.ListenPort)
 		groups[i] = addr
 	}
+
+	// Join the block control group (FF0E::B:FFFE) so we cache block
+	// announcement and coinbase frames for retransmission.
+	ctrlIP := shard.ControlGroupAddr(cfg.MCPrefix, cfg.MCGroupID, shard.CtrlGroupControl)
+	groups = append(groups, &net.UDPAddr{IP: ctrlIP, Port: cfg.ListenPort})
+
 	return groups, nil
 }
